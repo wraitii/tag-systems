@@ -1,0 +1,106 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb}
+\title{A restriction on three-letter clocks for deletion-two tag systems}
+\author{}
+\date{}
+\begin{document}
+\maketitle
+
+\paragraph{Problem.}
+A tagged block entered at alignment $p\in\{0,1\}$ produces the
+concatenation of the appendants of its letters at positions $p,p+2,\ldots$
+(zero-based). It passes alignment $p+|w|$ modulo two to the following
+block. A one-sweep cell consists of two fixed finite words $w_0,w_1$
+of even and odd length, respectively. An integrator outputs the word
+$w_{s+p}$ from $w_s$, and a differentiator outputs $w_p$.
+All bit arithmetic below is over $\mathbb F_2$ unless counts or ordinary
+matrix eigenvalues are being computed.
+
+\paragraph{Claim.}
+A closed alphabet of three letters, one with empty appendant, cannot
+implement both cells with the same productions. There is no bound on
+appendant lengths or cell lengths in this statement.
+
+\paragraph{Incidence reduction.}
+Call the other letters $A,B$. Let $M$ be the two-by-two integer matrix
+whose column $j$ counts the two letters in the appendant of $j$, and
+let $c_s$ count them in $w_s$. For either cell the two alignments
+produce the two different state words, once each. Consequently
+\[
+ Mc_0=Mc_1=c_0+c_1.
+\]
+If $M$ is invertible then $c_0=c_1$. The counts of the selected
+letters in the two alignments must also agree since their images under
+$M$ agree. Their outputs therefore have the same length, contradicting
+the state parities. Thus $M$ is singular. Also $M(c_0+c_1)=2(c_0+c_1)$,
+and $c_0+c_1\ne0$ since an eraser-only word cannot regenerate a cell.
+
+\paragraph{Irreducible case.}
+A nonnegative irreducible integer matrix of size two with eigenvalues
+zero and two must have all entries one (use the trace and determinant).
+Write $U,V$ for the two appendants. Each contains one $A$ and one $B$.
+Every state word is an output and can therefore be parsed into copies
+of $U,V$. The number $n$ of copies is the same in both states by the
+incidence equation. The parsing used in subsequent sweeps can always
+be the one induced by production, regardless of any ambiguity.
+
+In a copy the two live letters lie in either the same lane or opposite
+lanes. If both types use the same lane for their two letters, every
+selected pair produces one $U$ and one $V$, fixing the output length
+for fixed $n$. If just one type uses a single lane, exactly half the
+copies of that type must be selected to preserve $n$ on each alignment.
+Hence its multiplicity is even in either recurrent state. The other
+type's multiplicity has parity $n\bmod 2$, fixing the total width
+parity. Neither case permits opposite state parities.
+
+It remains that both types have one live letter per lane. Their widths
+must have opposite parities. Label each type by its width parity $s$.
+It transmits $u+s$ on input $u$. The next type has bit $u+f(s)$
+because the two alignments produce opposite types. Every Boolean
+function of one bit is constant or $s$ plus a constant. On comparing
+two input streams with the same initial cell state, the constant
+drops out. Write $x$ for a one-sweep delay. The response of one copy
+to an input difference is then either $1+x$ (constant $f$), or
+$(1+x)^{-1}$ (nonconstant $f$). Every copy has the same response,
+so a row of $n$ copies has its $n$-th power. Positive powers of one
+choice cannot supply both $1+x$ and $(1+x)^{-1}$.
+
+\paragraph{Reducible case.}
+The diagonal entries are two and zero. Let $G$ denote the letter
+with diagonal entry two. If its appendant $W$ contains no auxiliary
+letter, no auxiliary letter can recur in a state word. Otherwise
+triangularity forces the auxiliary letter to emit only erasers. Thus,
+in the recurrent part, each sweep leaves copies of $W$ separated
+by erasers. Each $W$ has two $G$s. The same number $n$ of copies
+occurs in both states by the incidence equation for $G$ (after
+discarding any nonrecurring auxiliary letter).
+
+If both $G$s have the same parity within $W$, then precisely half
+the copies must see each alignment to regenerate $n$ copies. This
+fixes the total contribution from auxiliary letters too, since their
+number selected is summed over equal numbers of each alignment.
+The outputs have equal lengths.
+
+Otherwise each $W$ regenerates one copy, surrounded by some erasers.
+Assign the produced prefix and suffix to that same copy at each step.
+Let the prefix and suffix parity functions of the alignment $p$ seen
+by the core be $f(p)$ and $g(p)$. Consider differences between two
+input histories and let $\alpha,\beta$ be the respective slopes of
+these Boolean functions (zero or one). If $u$ is the incoming
+difference before the prefix, $p$ the difference at the core, and $v$
+the outgoing difference after the suffix, then
+\[
+ p=u+\alpha x p,\qquad v=p+\beta x p.
+\]
+The fixed width of $W$ cancels in differences. Every recurrent
+copy consequently has the same transfer
+$(1+\beta x)/(1+\alpha x)$. It is either $1$, $1+x$, or its inverse.
+As before, powers of just one transfer cannot implement the two
+required cells. The conclusion also covers zero auxiliary emissions.
+
+\paragraph{Scope.}
+This excludes a three-letter clock with a shared eraser under the
+specified one-sweep cell interfaces. It places no restriction on
+clocks operating over several sweeps, different clock interfaces,
+or programs in which the clock and data use common live letters.
+\end{document}
