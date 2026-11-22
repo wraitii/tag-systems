@@ -6,11 +6,15 @@ __pycache__/
 .env.*
 !.env.example
 .lake/
+build/
 *.olean
 *.ilean
 *.aux
 *.log
 *.out
+*.toc
+*.fls
+*.fdb_latexmk
 *.synctex.gz
 
 1-s2.0-S0304397596000813-main.pdf

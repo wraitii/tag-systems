@@ -1,8 +1,11 @@
 """A universal seven-symbol 2-tag system with literal unary Collatz returns."""
 
 from collections import deque
+from pathlib import Path
 import re
+import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
 from parity_program import bouncing_machine, clock, guarded
 
 PAIR = "bc"

@@ -1,0 +1,449 @@
+\documentclass{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\Ftwo}{\mathbb{F}_2}
+\newcommand{\ttw}[1]{\texttt{#1}}
+
+\title{A Universal Six-Symbol 2-Tag System with Cycle Detection}
+\author{Lancelot de Ferri\`ere\thanks{The six-symbol construction, proofs, and Lean~4 formalization were developed with GPT~6.2~Astra.}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a fixed six-symbol 2-tag system over the alphabet $\{\ttw{I},\ttw{D},\ttw{z},\ttw{e},\ttw{a},\ttw{b}\}$ with total appendant length $18$ that is computationally universal under finite starting queues, with halting observed as exact queue repetition.
+For any deterministic counter machine with a fresh entry state, a terminal halt state, and an enabled instruction at every nonhalting configuration, a computable encoder maps the machine and its input to a finite queue that eventually repeats identically if and only if the machine halts.
+The source machine need not be reversible: a reversible front end is composed with a parity-controlled tag compiler and a forward--backward bouncing construction.
+The entire reduction---front end, tag compiler, and equivalence proof---is formally verified in Lean~4, leaving only Minsky's universality theorem for counter machines as an external premise.
+To our knowledge, this improves on the 19-symbol universal 2-tag system UT19 to give the smallest known universal 2-tag system, and under rule-count and transition-table-size measures yields one of the smallest known universal machines operating on finite initial configurations.
+We also establish a restricted lower bound showing that four clock symbols are necessary for this one-sweep parity-clock architecture.
+\end{abstract}
+
+\section{Introduction}
+
+A \emph{2-tag system}~\cite{Post1943} consists of a finite alphabet $\Sigma$ and a production map $P:\Sigma \to \Sigma^*$.
+At each step, if the queue $q \in \Sigma^*$ has length at least $2$, the system reads the first letter $x$ of $q$, deletes the first two letters, and appends $P(x)$ to the right end.
+A queue of length less than $2$ has no successor.
+
+We fix the six-symbol alphabet $\Sigma = \{\ttw{I},\ttw{D},\ttw{z},\ttw{e},\ttw{a},\ttw{b}\}$ and the six productions
+\begin{equation}\label{eq:productions}
+\begin{aligned}
+\ttw{I} &\to \ttw{ezII}, & \ttw{D} &\to \ttw{DDez}, & \ttw{z} &\to \ttw{e}, \\
+\ttw{a} &\to \ttw{b},    & \ttw{b} &\to \ttw{aaaeaeae}, & \ttw{e} &\to \varepsilon.
+\end{aligned}
+\end{equation}
+
+\begin{theorem}[Main result]\label{thm:main}
+There is a computable encoding of every deterministic counter machine $M$ (having a fresh entry state, a terminal halt state, and an enabled transition at every nonhalting configuration) and input register file $x$ into a finite starting queue $q(M,x) \in \Sigma^*$ such that $M$ reaches its halt state on input $x$ if and only if the run of~\eqref{eq:productions} from $q(M,x)$ eventually repeats a queue word identically.
+\end{theorem}
+
+Here \emph{exact repetition} means there exist distinct step counts $t_1 < t_2$ at which the tag system is defined and produces the same word $q_{t_1} = q_{t_2}$; halting on a short queue does not satisfy this condition.
+The source machine $M$ need not be reversible, and both program and data reside in the finite queue $q(M,x)$ while the table~\eqref{eq:productions} stays fixed.
+
+\paragraph{Context and comparison.}
+Tag systems were introduced by Post~\cite{Post1943}, proved recursively unsolvable by Minsky~\cite{Minsky1961} (deletion number $6$), and shown universal at the minimal nontrivial deletion number $2$ by Cocke and Minsky~\cite{CockeMinsky1964} (see also Wang~\cite{Wang1963}).
+At the lower end of the alphabet-size spectrum, binary ($2$-symbol) $2$-tag systems are decidable---a claim of Post later proved by De~Mol~\cite{DeMol2010}---whereas $3$ symbols already suffice to simulate the Collatz $3n+1$ problem via De~Mol's system $\ttw{a} \to \ttw{bc}$, $\ttw{b} \to \ttw{a}$, $\ttw{c} \to \ttw{aaa}$~\cite{DeMol2008}.
+Combined with Theorem~\ref{thm:main}, this narrows the open frontier for universal $2$-tag systems to alphabets of size $3$, $4$, and $5$.
+Neary and Woods later showed that 2-tag systems can simulate Turing machines in polynomial time~\cite{NearyWoods2006} and used tag-like systems to construct small universal Turing machines~\cite{NearyWoods2009}, following Rogozhin's benchmarks~\cite{Rogozhin1996}.
+
+Most classical universality results for 2-tag systems allow the alphabet size to grow with the simulated machine, rather than fixing a single \emph{universal} 2-tag system whose finite queue encodes both program and input.
+For a fixed universal 2-tag system, the smallest previously known construction to our knowledge is \emph{UT19} (19 symbols), designed by ais523~\cite{ais523UT19}.
+The table~\eqref{eq:productions} reduces the alphabet from $19$ to $6$ symbols.
+
+Under simple rule-count and description-size metrics,~\eqref{eq:productions} is also among the smallest known universal machines of any kind: it has $6$ productions and a total right-hand-side length of $18$ symbols (counting $\varepsilon$ as $0$), compared with $22$--$25$ transitions in the smallest standard universal Turing machines such as Rogozhin's $(4,6)$ and Neary--Woods's $(6,4)$ and $(5,5)$ machines~\cite{Rogozhin1996,NearyWoods2009}.
+Moreover, unlike weakly universal cellular automata such as Rule~110~\cite{Cook2004} or weakly universal small Turing machines, every computation starts from a \emph{finite} configuration with no infinite periodic background.
+Two trade-offs should be noted explicitly: halting is observed by exact queue repetition rather than queue exhaustion, and counters are stored in unary-of-exponentials (giving exponential slowdown relative to the counter machine).
+
+\paragraph{Overview of the construction.}
+Because a 2-tag system deletes two letters per step, one full pass over the queue (a \emph{sweep}) reads only alternate letters---either even positions (lane $0$) or odd positions (lane $1$).
+The construction exploits this alignment bit as a 1-bit control wire:
+\begin{enumerate}
+\item \emph{Program clocks} built from $\{\ttw{I},\ttw{D},\ttw{z},\ttw{e}\}$ sit between counters and XOR a fixed, periodic bitmask onto the passing alignment without retaining or smearing parity changes from upstream counters.
+\item \emph{Exponential counters} built from $\{\ttw{a},\ttw{b}\}$ represent an exponent $E$ as $2^E$ copies of $W = \ttw{aaaeaeae}$, incrementing or decrementing $E$ in two sweeps according to the incoming lane.
+\item \emph{Zero testing} uses parity underflow: decrementing at $E=0$ leaves a single odd-length letter $\ttw{b}$, which regenerates $W$ while toggling the alignment for the next command.
+\item \emph{Cycle detection} uses a reversible front end and a forward--backward bouncing wrapper so that halting runs stay bounded (forcing exact repetition) while nonhalting runs grow without bound.
+\end{enumerate}
+
+\section{Sweeps and the Program Clock}
+
+\subsection{Sweeps and alignment}
+
+Write a state as a \emph{nominal word} $w = w^{(1)} w^{(2)} \cdots w^{(k)}$ (a concatenation of blocks) together with a \emph{cut bit} $p \in \{0,1\}$.
+The corresponding \emph{physical queue} is $w$ with its first $p$ letters removed.
+In one sweep, each block $u$ entered on lane $b \in \{0,1\}$ outputs the concatenation of $P(u_i)$ over zero-based indices $i \in \{b, b+2, \ldots\}$ and passes the outgoing lane $b \oplus (|u| \bmod 2)$ to the next block.
+The outgoing lane after the final block becomes the next sweep's cut bit $p'$.
+
+\begin{lemma}[Sweep semantics]\label{lem:sweep}
+Suppose the leading block $w^{(1)}$ produces a nonempty word on either lane.
+Then one nominal sweep corresponds to exactly $\lceil |q|/2 \rceil$ literal 2-tag steps from the physical queue $q$, yielding the next physical queue.
+\end{lemma}
+
+\begin{proof}
+Each step reads one letter of $q$ and deletes two.
+If $|q|$ is even, the $|q|/2$ steps consume $q$ exactly, leaving the concatenated block outputs with cut bit $p' = 0$.
+If $|q|$ is odd, after $(|q|-1)/2$ steps one letter of $q$ remains; its step appends its production and deletes both that final old letter and the first newly appended letter (which exists because $w^{(1)}$ emits at least one letter).
+The remaining queue is the next nominal word with its first letter removed, i.e., cut bit $p' = 1$.
+In both cases $p'$ equals $p \oplus (|w| \bmod 2)$, which is the outgoing lane of the nominal sweep.
+\end{proof}
+
+\subsection{Differentiator and integrator cells}
+
+Clocks are assembled from two 1-bit memory cells, each having an even-length state-$0$ word and an odd-length state-$1$ word:
+
+\begin{center}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Cell & State $0$ ($s=0$) & State $1$ ($s=1$) & Outgoing lane $y$ & Next state $s'$ \\
+\midrule
+Integrator     & \ttw{ezII} & \ttw{eezII} & $p \oplus s$ & $p \oplus s$ \\
+Differentiator & \ttw{DDez} & \ttw{DDeze} & $p \oplus s$ & $p$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Direct inspection of positions $0,2,\ldots$ (lane $0$) and $1,3,\ldots$ (lane $1$) verifies the table:
+$\ttw{ezII} \mapsto (\ttw{ezII}, \ttw{eezII})$,
+$\ttw{eezII} \mapsto (\ttw{eezII}, \ttw{ezII})$,
+and $\ttw{DDez}, \ttw{DDeze} \mapsto (\ttw{DDez}, \ttw{DDeze})$.
+In both cells, width parity gives $y = p \oplus s$.
+Thus a differentiator satisfies $y_t = p_t \oplus p_{t-1}$ and an integrator satisfies $y_t = p_t \oplus y_{t-1}$ (with zero past).
+Representing a bit stream $(b_t)_{t \ge 0}$ as a formal power series $\sum_{t \ge 0} b_t X^t \in \Ftwo[[X]]$, their zero-state input--output maps are multiplication by $1+X$ and division by $1+X$, respectively.
+
+\subsection{Clock construction and seed formula}
+
+\begin{definition}[Seeded clock]\label{def:clock}
+Let $L$ be a power of two and let $m = (m_0, \ldots, m_{L-1}) \in \Ftwo^L$ be a period-$L$ bitmask.
+Define the \emph{clock word} $C(m)$ as $L$ copies of $\ttw{DDez}$ followed by $L$ integrators indexed $i = 0, \ldots, L-1$, where integrator $i$ is initialized to $\ttw{eezII}$ if $\mathrm{seed}_i = 1$ and $\ttw{ezII}$ if $\mathrm{seed}_i = 0$, with
+\begin{equation}\label{eq:seed}
+\mathrm{seed}_i \;=\; \bigoplus_{i \subseteq j} m_j,
+\end{equation}
+where $i \subseteq j$ means every set bit in the binary expansion of $i$ is also set in $j$.
+\end{definition}
+
+\begin{theorem}[Clock identity]\label{thm:clock}
+For any incoming alignment stream $(p_t)_{t \ge 0}$ (including streams modified dynamically by earlier counters), the outgoing alignment of $C(m)$ at sweep $t$ is $p_t \oplus m_{t \bmod L}$.
+\end{theorem}
+
+\begin{proof}
+By linearity over $\Ftwo$, decompose the output into the zero-seed response to $(p_t)$ plus the zero-input response to the initial seeds.
+With all seeds zero, $L$ differentiators followed by $L$ integrators have transfer $(1+X)^L (1+X)^{-L} = 1$, passing every incoming stream $(p_t)$ unchanged.
+
+Now set only $\mathrm{seed}_i = 1$ on zero input.
+Cell $i$ emits the constant stream $1 + X + X^2 + \cdots = (1+X)^{-1}$, followed by $L - 1 - i$ integrators.
+Its contribution to the output stream is
+\[
+(1+X)^{-(L-i)} \;=\; \frac{(1+X)^i}{(1+X)^L} \;=\; \frac{(1+X)^i}{1 + X^L},
+\]
+since $L$ is a power of two in characteristic $2$.
+The denominator $1 + X^L$ repeats the numerator with period $L$.
+Factoring $(1+X)^i = \prod_{k \in \mathrm{bits}(i)} (1 + X^{2^k})$ shows that the coefficient of $X^t$ ($0 \le t < L$) is $1$ if and only if $t \subseteq i$.
+Therefore, the zero-input output at sweep $t < L$ is $\bigoplus_{t \subseteq i} \mathrm{seed}_i$.
+
+Substituting~\eqref{eq:seed}, each $m_j$ with $t \subseteq j$ is counted once for every intermediate index $i$ satisfying $t \subseteq i \subseteq j$.
+There are $2^{|j \setminus t|}$ such indices, which is odd if and only if $j = t$.
+Hence the zero-input output at sweep $t$ is $m_{t \bmod L}$, and adding the zero-seed response gives $p_t \oplus m_{t \bmod L}$.
+\end{proof}
+
+\section{Counters and Guarded Instructions}
+
+\subsection{Queue layout}
+
+A \emph{command} consists of two sweeps: for each counter, a first-sweep \emph{sign bit} ($0$ for increment, $1$ for decrement) and a second-sweep \emph{lane bit}.
+Given a nonempty even number of commands, let $L$ be the least power of two at least twice that count, and pad to $L/2$ commands using cancelling pairs of all-increment, all-decrement commands (with zero second-sweep bits) starting at an instruction boundary.
+
+For $r$ counters, let $d_j \in \Ftwo^L$ be the resulting stream of desired lane bits at counter $j$ (interleaving both sweeps of each command), and set $d_0 = d_{r+1} = 0$.
+Writing $W = \ttw{aaaeaeae}$, the starting queue for initial logical counter values $v_1, \ldots, v_r \ge 0$ is
+\begin{equation}\label{eq:layout}
+C(d_0 \oplus d_1)\; W^{2^{4+4v_1}}\; C(d_1 \oplus d_2)\; W^{2^{4+4v_2}}\; \cdots\; C(d_{r-1} \oplus d_r)\; W^{2^{4+4v_r}}\; C(d_r),
+\end{equation}
+started at cut bit $0$ (with $\oplus$ acting pointwise).
+Because the clock masks telescope, Theorem~\ref{thm:clock} implies that on sweep $t$, counter $j$ receives lane $d_{j,t \bmod L}$ XOR the starting cut XOR the width parities of earlier data blocks, while the outgoing cut equals the starting cut XOR the width parities of \emph{all} data blocks.
+
+\subsection{Exponential counters and underflow feedback}
+
+At the start of a command, a counter with exponent $E \ge 0$ is the word $W^{2^E}$.
+Reading $W = \ttw{aaaeaeae}$ on lane $0$ selects $\ttw{a,a,a,a} \to \ttw{bbbb}$; reading it on lane $1$ selects $\ttw{a,e,e,e} \to \ttw{b}$.
+On the second sweep, any even run $\ttw{b}^{2k}$ regenerates $W^k$ on \emph{either} lane.
+Consequently:
+\begin{itemize}
+\item Lane $0$ maps $W^{2^E} \to \ttw{b}^{4 \cdot 2^E} \to W^{2^{E+1}}$, incrementing $E$ by $1$.
+\item Lane $1$ with $E \ge 1$ maps $W^{2^E} \to \ttw{b}^{2^E} \to W^{2^{E-1}}$, decrementing $E$ by $1$.
+\item \emph{Underflow} ($E=0$, lane $1$): $W^1 \to \ttw{b}^1$. Because $|\ttw{b}| = 1$ is odd, reading $\ttw{b}$ on lane $0$ on the second sweep regenerates $W^1$ (keeping $E=0$) while toggling the cut bit for the next command.
+\end{itemize}
+Every first-sweep data block has even width $8 \cdot 2^E$, and on the second sweep only this singleton $\ttw{b}$ can alter downstream alignment.
+
+\subsection{A 12-command zero-guard instruction}
+
+At the start of a logical instruction, the cut is $0$ and each logical counter value $v \ge 0$ is encoded with exponent $E = 4 + 4v$.
+To update each passive counter by a specified logical amount $a \in \{-1, 0, +1\}$ if and only if a designated tested counter equals $0$, we emit the $12$ commands in Table~\ref{tab:guard} (where $+$ denotes first-sweep lane $0$ and $-$ denotes first-sweep lane $1$).
+All second-sweep lane bits are $0$, except at the tested counter in commands $6$ and $8$, where the bit is $1$.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Commands & Tested & Passive ($a=+1$) & Passive ($a=0$) & Passive ($a=-1$) \\
+\midrule
+1--4 (remove bias)  & \ttw{----} & \ttw{+-+-} & \ttw{+-+-} & \ttw{+-+-} \\
+5--6 (first probe)  & \ttw{-+}   & \ttw{+-}   & \ttw{+-}   & \ttw{-+}   \\
+7--8 (second probe) & \ttw{-+}   & \ttw{+-}   & \ttw{-+}   & \ttw{-+}   \\
+9--12 (restore bias)& \ttw{++++} & \ttw{+-+-} & \ttw{+-+-} & \ttw{+-+-} \\
+\bottomrule
+\end{tabular}
+\caption{Programmed first-sweep signs for the 12-command zero-guard instruction.}
+\label{tab:guard}
+\end{table}
+
+\begin{lemma}[Zero-guard invariant]\label{lem:guard}
+Suppose at entry the cut is $0$, every counter has exponent $4 + 4v_j$, and whenever the tested counter has $v_{\mathrm{test}} = 0$, every passive counter with $a_j = -1$ has $v_j \ge 1$.
+Then after the $12$ commands of Table~\ref{tab:guard}, the cut is again $0$, the tested counter still has exponent $4 + 4v_{\mathrm{test}}$, and each passive counter has exponent $4 + 4(v_j + a_j)$ if $v_{\mathrm{test}} = 0$ and $4 + 4v_j$ if $v_{\mathrm{test}} > 0$.
+\end{lemma}
+
+\begin{proof}
+Commands 1--4 reduce the tested exponent to $4v_{\mathrm{test}}$ while leaving every passive counter unchanged (never dropping its exponent below $4$).
+If $v_{\mathrm{test}} > 0$, then $4v_{\mathrm{test}} \ge 4$, so no counter underflows during probes 5--6 or 7--8; every probe executes its programmed signs, each pair cancels, and commands 9--12 restore the bias.
+
+If $v_{\mathrm{test}} = 0$, then in each probe (5--6 and 7--8) the first $-$ hits $E=0$ and produces a singleton $\ttw{b}$.
+Both the cut and the tested second-sweep bit are $0$, so the singleton is read, regenerates $W$, and flips the cut to $1$ for the second command of the probe.
+Cut $1$ reverses every programmed sign in that second command: the tested counter's $+$ becomes $-$, underflowing again, and its second-sweep bit $1$ cancels cut $1$ so the second singleton is also read on lane $0$, restoring cut $0$.
+Meanwhile, each passive counter executes the opposite of its second programmed sign, which equals its first programmed sign---applying that sign twice.
+Summing both probes changes each passive exponent by $+4$, $0$, or $-4$ according to $a \in \{+1, 0, -1\}$, i.e., $4a$ exponent units.
+Passive counters enter with exponent at least $4$ (and at least $8$ when $a=-1$ on the zero branch), preventing accidental passive underflow throughout.
+\end{proof}
+
+\section{From Counter Machines to Exact Cycles}
+
+The reduction proceeds in two stages: a reversible front end followed by a tag compiler with a forward--backward bouncing wrapper.
+
+\subsection{Normalized source machines}
+
+A \emph{counter machine} has finitely many states, finitely many nonnegative integer registers, and finitely many edges, each performing one of: zero test, positivity test, increment, decrement (enabled only when positive), or no-op.
+We call a counter machine \emph{standard} if it is deterministic (at most one enabled edge per configuration), has a fresh entry state (no incoming edges) and a terminal halt state (no outgoing edges), and has an enabled edge at every nonhalting configuration (reachable or not).
+Standard Minsky counter machines~\cite{Minsky1967} take this form after adding a fresh entry state.
+
+\subsection{Reversible front end}
+
+Given a standard counter machine $M$ with $N$ edges numbered $0, \ldots, N-1$, we construct an equivalent reversible machine $\mathrm{rev}(M)$ by adding a \emph{history register} $H$ and a \emph{work register} $K$, both initialized to $0$.
+Each source edge $e$ into state $q$ is replaced by a three-step gadget:
+\begin{enumerate}
+\item Apply the operation of $e$, move to a private state unique to $e$, and test $K = 0$.
+\item Transfer $H$ into $K$ one unit at a time.
+\item Enter a shared loop for $q$ at offset $\mathrm{idx}(e)$. From offset $k$, the loop adds $N + 1 - k$ to $H$ and reaches the loop head; each pass through the head moves one unit from $K$ and adds $N + 1$ to $H$, exiting to $q$ when $K = 0$.
+\end{enumerate}
+Net effect: $H \mapsto (N+1)H + (N + 1 - \mathrm{idx}(e))$.
+The remainder modulo $N+1$ uniquely identifies the edge $e$ that entered $q$, making every step backward-deterministic.
+Each gadget state has at most two incoming edges, separated by a zero test against a positivity test or increment on the same register.
+The one-sided tests ($K=0$ in step~1, $H>0$ in the loop) always succeed on runs starting from $H = K = 0$.
+Hence $\mathrm{rev}(M)$ has a fresh entry, terminal halt, forward- and backward-determinism, an enabled edge at every reachable nonhalting configuration, and halts if and only if $M$ halts.
+(Morita~\cite[Theorem~3.1]{Morita1996} gives an alternative reversible simulation using a doubling history counter.)
+
+\subsection{Compiling a reversible machine}
+
+Let $R$ be a reversible machine of the form produced by $\mathrm{rev}(M)$.
+Alongside the data registers, allocate a \emph{state flag} for each state ($0$ active, $1$ inactive; only entry starts at $0$), an \emph{edge latch} for each edge (all initially $1$), and a \emph{permanent zero register} for unconditional updates.
+One period of the compiled tag program simulates one step of $R$ via three finite scans of 12-command zero-guard instructions:
+\begin{enumerate}
+\item \textbf{Select.} For each edge, temporarily add a mismatch bit to its source flag ($+1$ if operand $=0$ for a positivity test or decrement; unconditional $+1$ then $-1$ if operand $=0$ for a zero test; $0$ for increment or no-op). Guarded by the resulting source flag being $0$, decrement the edge latch, then undo the mismatch updates in reverse order with opposite signs. Exactly the unique enabled edge now has latch $0$.
+\item \textbf{Apply.} For each edge, guarded by its latch being $0$, add $1$ to its source flag, subtract $1$ from its destination flag (combining updates for self-loops), and apply its data operation. Exactly one edge fires.
+\item \textbf{Clear.} For each edge, run the selection test using its destination flag and the guard of its inverse operation (tests keep their predicate; inverse of increment tests positive; inverse of decrement is unconditional; no-op is self-inverse), this time \emph{incrementing} its latch. Disjoint images ensure that only the edge just taken passes, restoring all latches to $1$, all temporary flags, and the permanent zero.
+\end{enumerate}
+Every control register is distinct from its target, and every enabled subtraction has a positive operand by the flag, latch, and machine invariants.
+Concatenating the scans, omitting empty updates, and padding to a power-of-two period yields a queue whose period boundaries track $R$'s trajectory by induction.
+
+\subsection{Halting as exact queue repetition}
+
+\begin{proof}[Proof of Theorem~\ref{thm:main}]
+Apply the reversible front end to obtain $R = \mathrm{rev}(M)$, then construct a bouncing reversible machine $B(R)$ with forward and backward copies of every state: keep original edges in the forward copy, reverse each edge with its inverse operation in the backward copy, and add two no-op turnarounds (forward halt $\to$ backward halt, backward entry $\to$ forward entry).
+Missing incoming edges at entry and outgoing edges at halt keep $B(R)$ reversible.
+Compile $B(R)$ starting at forward entry.
+
+If $M$ halts, then $R$ halts, so $B(R)$ bounces indefinitely along a finite path between entry and halt.
+Register values at period boundaries are bounded.
+Within a period, each exponent can grow by at most the fixed number of commands, and each clock cell has width $4$ or $5$; intermediate queues during a sweep consist of an old suffix plus a prefix of the bounded next word, so physical queue lengths are globally bounded.
+By Lemma~\ref{lem:sweep}, the leading clock sustains every sweep.
+Finitely many words of bounded length over $\Sigma$ force exact repetition.
+
+If $M$ does not halt, then $R$ runs forever in the forward copy.
+Its trajectory never repeats a configuration: by backward-determinism, any repetition would pull back to a predecessor of the fresh entry state, which does not exist.
+Finitely many control states therefore force unbounded register values at period boundaries, hence unbounded physical queue lengths.
+Exact repetition at any tag step would trap the deterministic tag system in a periodic tail of bounded length, a contradiction.
+\end{proof}
+
+\section{Formal Verification in Lean 4}
+
+The entire reduction is formalized in two Lean~4 files (checked with Lean~4.19 and its standard library, using only the standard axioms \ttw{propext}, \ttw{Classical.choice}, and \ttw{Quot.sound}, with no \ttw{sorryAx}):
+\begin{itemize}
+\item \ttw{SixSymbol.lean} formalizes the 2-tag system~\eqref{eq:productions}, clock identities, zero-guard instructions, reversible compiler, bouncing wrapper, and \ttw{SixSymbol.halt\_iff\_exact\_cycle}.
+\item \ttw{ReversibleCounter.lean} imports \ttw{SixSymbol.lean} unchanged, formalizes the reversible front end \ttw{rev}, discharges its reversibility and liveness obligations, and proves the end-to-end theorem (\ttw{ReversibleCounter.\allowbreak halt\_iff\_exact\_cycle}):
+\begin{align*}
+(\exists n,\; (m.\mathrm{path}\;\mathrm{input}\;n).\mathrm{pc} = m.\mathrm{halt})
+&\;\longleftrightarrow\; \\
+&\mathrm{ExactCycle}\bigl(\mathrm{encode}(\mathrm{rev}\;m\;\mathrm{std.fresh})(\mathrm{liftInput}\;\mathrm{input})\bigr).
+\end{align*}
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lp{0.58\linewidth}@{}}
+\toprule
+Theorem & Formalized statement \\
+\midrule
+\ttw{seeded\_clock}, \ttw{layout\_sweep} & Seeded clocks emit the target periodic mask on either lane; whole-layout sweeps match literal tag steps, including odd-boundary crossings. \\
+\ttw{gate\_realized}, \ttw{compiled\_periods} & Two-sweep commands realize the 12-command zero guard on a register bank; padded programs execute successive periods on one queue. \\
+\ttw{compiled\_repeats\_iff} & Exact repetition holds iff period-boundary register files range over a finite set (even if clock states vary between visits). \\
+\ttw{one\_period}, \ttw{checkpoint\_edge} & Select, Apply, and Clear realize the enabled forward/inverse step; turnarounds realize the bouncing trajectory. \\
+\ttw{halt\_iff\_exact\_cycle} & Halting $\iff$ exact queue repetition for reversible live machines. \\
+\ttw{rev\_reversible}, \ttw{rev\_live} & $\mathrm{rev}(M)$ is reversible and live on $H=K=0$ inputs. \\
+\ttw{rev\_of\_halt}, \ttw{halt\_of\_rev} & $\mathrm{rev}(M)$ halts iff $M$ halts, yielding the end-to-end equivalence. \\
+\bottomrule
+\end{tabular}
+\caption{Main verified theorems in \ttw{SixSymbol.lean} (top five rows) and \ttw{ReversibleCounter.lean} (bottom three rows).}
+\label{tab:lean}
+\end{table}
+
+The sole unformalized premise is Minsky's theorem~\cite{Minsky1967} together with the routine normalization of a counter machine to a fresh entry and terminal halt.
+An executable Python reference implementation of the reversible compiler is provided in \ttw{parity\_program.py}.
+
+\section{Examples}
+
+\paragraph{Doubling a tile.}
+Starting from $W = \ttw{aaaeaeae}$, six literal 2-tag steps double the block:
+\[
+\ttw{aaaeaeae} \to \ttw{aeaeaeb} \to \ttw{aeaebb} \to \ttw{aebbb} \to \ttw{bbbb}
+\to \ttw{bbaaaeaeae} \to \ttw{aaaeaeaeaaaeaeae}.
+\]
+
+\paragraph{FizzBuzz.}
+A single 2,128-letter starting queue generates FizzBuzz indefinitely (see \ttw{six\_symbol\_\allowbreak fizzbuzz.py}).
+Each period has $16$ slots of $4$ sweeps ($L = 64$).
+Numbering sweeps $t = 4(s-1) + u$ ($1 \le s \le 16$, $0 \le u < 4$), define $F_t = 1$ at offset $0$ of slots $3,6,9,12,15$; $B_t = 1$ at offset $0$ of slots $5,10,15$; and $A_t = 1$ only at slot $16$, offset $2$.
+The initial queue is
+\[
+C(F)\; C(F \oplus B)\; C(B \oplus A)\; W\; C(A),
+\]
+whose four 64-bit integrator seed vectors (cell $0$ as LSB) in hexadecimal are
+\begin{center}
+\ttw{0101101101101101},\quad \ttw{0000110100101010},\quad \ttw{5454544554555444},\quad \ttw{5555555555555555},
+\end{center}
+giving lengths $522 + 518 + 536 + 8 + 544 = 2{,}128$.
+In slots $1$--$15$, the first two clocks signal Fizz and Buzz while the data block doubles twice per slot (holding $4^n$ copies of $W$ after output $n$); slot $16$ doubles once and halves once, keeping the data run even on all sweeps so clock~4 restores cut $0$ by induction.
+
+\paragraph{Bouncing machine.}
+Compiling a single-edge machine $(\ttw{s} \xrightarrow{+X} \ttw{h})$ produces a 512-sweep period.
+The source halts after period~$1$, while the tag queue bounces $\ttw{s}(0) \to \ttw{h}(1) \to \ttw{h}(1) \to \ttw{s}(0) \to \ttw{s}(0) \to \ttw{h}(1)$, matching identically (including every clock cell) between checkpoints~$1$ and~$5$, $2{,}048$ sweeps apart.
+
+\section{Minimality and Five-Symbol Perspectives}
+
+Fix deletion number $2$, a single production table, finite starting queues, and exact queue repetition as the observable.
+Since binary ($2$-symbol) $2$-tag systems are decidable~\cite{DeMol2010} and Theorem~\ref{thm:main} establishes universality at $6$ symbols, the remaining open frontier for universal $2$-tag systems is alphabet sizes $3$, $4$, and $5$ (with $3$ symbols already hosting De~Mol's Collatz system $\ttw{a} \to \ttw{bc}$, $\ttw{b} \to \ttw{a}$, $\ttw{c} \to \ttw{aaa}$~\cite{DeMol2008}).
+
+\begin{proposition}[Three-letter clock obstruction]\label{prop:obstruction}
+Reserve two symbols for data and require a disjoint, closed clock alphabet (containing an eraser $\ttw{e}$) in which each clock cell uses two fixed state words of opposite length parity that regenerate the prescribed state word in one sweep on either alignment.
+Then no three-letter clock alphabet can implement both an integrator and a differentiator under a single table; hence at least $4 + 2 = 6$ symbols are required for this clock architecture.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Let $A,B$ be the two non-eraser clock letters, $M$ the $2 \times 2$ matrix counting $(A,B)$ in their appendants, and $c_0, c_1$ the count vectors of a cell's even and odd state words.
+Summing both lanes gives $M c_0 = M c_1 = c_0 + c_1$.
+If $M$ were invertible, $c_0 = c_1$ would force equal output lengths on both lanes, contradicting opposite state parities.
+Thus $M$ is singular with eigenvalue $2$, leaving two cases:
+(i) all entries of $M$ are $1$, or
+(ii) the diagonal entries are $2$ and $0$.
+In both cases, every state word parses into $n > 0$ copies of the generating appendant(s), and opposite state parities force each copy to place its live letters in opposite lanes.
+Every copy then obeys the same linear difference transfer in $\{1,\, 1+X,\, (1+X)^{-1}\}$, so positive powers of a single transfer cannot realize both $1+X$ and $(1+X)^{-1}$.
+Full details are given in \ttw{clock\_obstruction.tex}.
+\end{proof}
+
+Two five-symbol variations highlight what remains open beyond Proposition~\ref{prop:obstruction}:
+\begin{enumerate}
+\item \emph{Removing $\ttw{D}$ (integrator-only horizon compiler).} Dropping $\ttw{D}$ yields a five-symbol system that matches the six-symbol counters up to any chosen finite horizon $K$ (a power of two divisible by the period) by repeating each mask to length $K$ and seeding $K$ integrators, whose transfer $(1+X)^{-K} = (1+X^K)^{-1}$ copies inputs faithfully through sweep $K-1$. For the zero-guard example from $(0,0)$ with $K=32$, counter $Y$ agrees through sweep $32$ and diverges at sweep $34$ ($512$ vs.\ $128$ copies of $W$).
+\item \emph{Data-reloaded control.} A separate five-symbol table (\ttw{five-symbol-tag.md}) uses data itself to reload control, already demonstrating a second load from a retained payload; whether it supports recurring simulation from live output remains open.
+\end{enumerate}
+Settling whether six symbols are minimal in general requires ruling out data-reloaded control and all other five-symbol tables and encodings.
+
+\begin{thebibliography}{9}
+
+\bibitem{ais523UT19}
+ais523.
+\newblock UT19 (a 19-symbol universal 2-tag system).
+\newblock Esolang Wiki, 2023.
+\newblock \url{https://esolangs.org/wiki/UT19}.
+
+\bibitem{CockeMinsky1964}
+J.~Cocke and M.~Minsky.
+\newblock Universality of tag systems with $P=2$.
+\newblock \emph{Journal of the ACM}, 11(1):15--20, 1964.
+
+\bibitem{Cook2004}
+M.~Cook.
+\newblock Universality in elementary cellular automata.
+\newblock \emph{Complex Systems}, 15(1):1--40, 2004.
+
+\bibitem{DeMol2008}
+L.~De~Mol.
+\newblock Tag systems and Collatz-like functions.
+\newblock \emph{Theoretical Computer Science}, 390(1):92--101, 2008.
+
+\bibitem{DeMol2010}
+L.~De~Mol.
+\newblock Solvability of the halting and reachability problem for binary 2-tag systems.
+\newblock \emph{Fundamenta Informaticae}, 2010.
+\newblock (See also arXiv:0906.3329.)
+
+\bibitem{Minsky1961}
+M.~L.~Minsky.
+\newblock Recursive unsolvability of Post's problem of ``Tag'' and other topics in theory of Turing machines.
+\newblock \emph{Annals of Mathematics}, 74(3):437--455, 1961.
+
+\bibitem{Minsky1967}
+M.~L.~Minsky.
+\newblock \emph{Computation: Finite and Infinite Machines}.
+\newblock Prentice-Hall, 1967.
+
+\bibitem{Morita1996}
+K.~Morita.
+\newblock Universality of a reversible two-counter machine.
+\newblock \emph{Theoretical Computer Science}, 168(2):303--320, 1996.
+
+\bibitem{NearyWoods2006}
+T.~Neary and D.~Woods.
+\newblock P-completeness of cellular automaton Rule 110 (and polynomial-time simulation of 2-tag systems).
+\newblock In \emph{ICALP 2006}, LNCS 4051, pp.~132--143, Springer, 2006.
+
+\bibitem{NearyWoods2009}
+T.~Neary and D.~Woods.
+\newblock Four small universal Turing machines.
+\newblock \emph{Fundamenta Informaticae}, 91(1):123--144, 2009.
+
+\bibitem{Post1943}
+E.~L.~Post.
+\newblock Formal reductions of the general combinatorial decision problem.
+\newblock \emph{American Journal of Mathematics}, 65(2):197--215, 1943.
+
+\bibitem{Rogozhin1996}
+Y.~Rogozhin.
+\newblock Small universal Turing machines.
+\newblock \emph{Theoretical Computer Science}, 168(2):215--240, 1996.
+
+\bibitem{Wang1963}
+H.~Wang.
+\newblock Tag systems and lag systems.
+\newblock \emph{Mathematische Annalen}, 152(1):65--74, 1963.
+
+\end{thebibliography}
+
+\end{document}

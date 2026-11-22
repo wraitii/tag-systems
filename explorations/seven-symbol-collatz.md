@@ -56,7 +56,7 @@ Eight units of exponent bias suffice. Each passive path starts and ends in R and
 
 ## Universality and the observable
 
-Each guarded instruction occupies 64 sweeps. Concatenate instructions and pad to a power of two with four-sweep identities. The seeded clock banks then supply the masks on every lap, including in the presence of data-dependent cuts. An instruction restores cut zero before the next instruction. This implements the guarded language used in [the existing select/apply/clear compiler](parity_program.py).
+Each guarded instruction occupies 64 sweeps. Concatenate instructions and pad to a power of two with four-sweep identities. The seeded clock banks then supply the masks on every lap, including in the presence of data-dependent cuts. An instruction restores cut zero before the next instruction. This implements the guarded language used in [the existing select/apply/clear compiler](../examples/parity_program.py).
 
 More explicitly, take the forward/backward counter machine from that compiler and replace each guarded operation by the 64-sweep implementation above. At every period boundary the registers encode the same source configuration as in the original proof. If the source halts, the simulated forward/backward path is bounded. The clocks have bounded cell widths, and within a period a bounded register has bounded intermediate words, so some entire physical queue repeats. If the source never halts, the reversible forward path from a fresh entry has unbounded registers. Thus physical checkpoint lengths are unbounded, which is impossible after an exact repetition in a deterministic tag system. This gives the same halt-if-and-only-if-exact-repetition reduction.
 
