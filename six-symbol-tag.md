@@ -1,74 +1,153 @@
 # A universal six-symbol 2-tag system with cycle detection
 
-The alphabet is `I D z e a b`. Read the first letter, delete the first two letters, and append the word assigned to the letter read. A queue shorter than two has no successor. The letter `e` has the empty appendant.
+The alphabet is `I D z e a b`. Each tag step reads the first letter of the queue, deletes the first two letters, and appends the production assigned to the letter read (`e` appends the empty word $\varepsilon$). A queue shorter than two letters has no successor.
 
 ```text
 I → ezII       D → DDez       z → e
 a → b          b → aaaeaeae   e → ε
 ```
 
-**Claim.** There is a computable encoding of a deterministic counter machine and its input into a finite queue such that the machine reaches its halt state if and only if the tag queue eventually repeats exactly. The source machine needs a fresh entry, a terminal halt, and an applicable instruction at every nonhalting configuration. It need not be reversible. The program and data are in the queue. The six productions are fixed. Lean checks the whole reduction. Its only external premise is Minsky's theorem that such counter machines are universal.
+> **Main result.** There is a computable encoding of any deterministic counter machine (with a fresh entry, a terminal halt, and an enabled instruction at every nonhalting configuration; not necessarily reversible) and its input into a finite starting queue such that the machine halts if and only if the queue eventually repeats identically. Program and data live in the queue; the six productions are fixed. Lean 4 checks the entire reduction, leaving Minsky's universality theorem as the sole external premise.
 
-### Program clock
+---
 
-A sweep reads alternate letters of the current word. A block entered at alignment $p$ passes $p$ on to the next block if its length is even and flips it if its length is odd. When a tag deletion crosses a sweep boundary, the next sweep starts at the second letter.
+## How it works
 
-| Cell | State 0 | State 1 | Next state |
-|---|---|---|---|
-| Integrator | `ezII` | `eezII` | `p XOR s` |
-| Differentiator | `DDez` | `DDeze` | `p` |
+Because a 2-tag system deletes two letters per step, each pass over the queue (a **sweep**) reads only every second letter—either even positions (**lane 0**) or odd positions (**lane 1**). The construction turns this parity alignment into a 1-bit control wire running down the queue:
 
-**One sweep of the physical queue.** Write a nominal word as a concatenation of blocks, with a cut bit $p$. The physical queue is the nominal word with its first $p$ letters removed. In a block $w$ entered on lane $u$, concatenate the productions at zero-based indices $u,u+2,\ldots$. Pass $u\oplus (|w|\bmod 2)$ to the next block. Concatenate the resulting blocks to obtain the next nominal word. The outgoing lane at the end of the old word is the next cut bit. Indeed, an even physical length ends on an ordinary two-letter deletion. An odd length leaves one old letter, whose deletion consumes the first appended letter too. In the constructed queues the leading clock already produces a whole cell on either lane, so this crossing is always possible. Each sweep takes exactly the ceiling of half the old physical length in tag steps.
+1. **Program clocks (`I`, `D`, `z`, `e`)** sit between counters and XOR a fixed, periodic bitmask onto the passing alignment without smearing earlier signals.
+2. **Exponential counters (`a`, `b`)** store an exponent $E$ as $2^E$ copies of $W = \texttt{aaaeaeae}$, doubling on lane 0 ($E \mapsto E+1$) and halving on lane 1 ($E \mapsto E-1$) every two sweeps.
+3. **Zero detection via underflow:** decrementing at $E = 0$ leaves a single odd-length `b`, flipping the alignment for the rest of the queue and feeding a zero-test bit into the next command.
+4. **Cycle detection via reversibility:** we convert the source machine into a reversible one and bounce it between entry and halt—trapping halting runs in a bounded loop (forcing exact repetition) while divergent runs grow unboundedly.
 
-**Clock identity and seed.** In either cell the outgoing bit is $y=p\oplus s$ by width parity. Reading positions 0,2,… and 1,3,… in each displayed word gives the next-state entries in the table. Thus a differentiator stores the preceding input, and an integrator stores its preceding output. With initial state zero their respective input-output maps on streams are multiplication by $1+X$ and division by $1+X$, where $X$ delays a bit stream by one sweep and all coefficients are modulo two. These formulas follow from $y_t=p_t+p_{t-1}$ and $y_t=p_t+y_{t-1}$ with zero past.
+---
 
-For a mask $m_0,\ldots,m_{L-1}$, with $L$ a power of two, define the literal clock word $C(m)$ as $L$ copies of `DDez` followed by $L$ integrators in order $i=0,\ldots,L-1$. Use `eezII` at $i$ if its seed bit is 1 and `ezII` otherwise. To compute seed bit $i$, XOR all $m_j$ for which the set bits of $i$ are a subset of those of $j$.
+## The program clock
 
-To prove the formula, first set all seeds to zero. The two banks cancel on every input stream. Now switch on seed $i$ alone. Its cell emits the constant stream of ones on zero input, and there are $L-1-i$ integrators after it. Its contribution is
-$$
-(1+X)^{-(L-i)}=(1+X)^i/(1+X^L).
-$$
-The denominator repeats the numerator every $L$ sweeps. Factoring the numerator into $1+X^{2^k}$ over the set bits $k$ of $i$ shows that it has a 1 at precisely the subsets of $i$. The output at $t<L$ therefore XORs the seeds over supersets of $t$. Applying this transform twice counts each superset $j$ once for every intermediate subset between $t$ and $j$. That count is odd exactly when $j=t$, proving that the transform is its own inverse. By linearity, on **any** incoming stream the outgoing bit at sweep $t$ is the incoming bit XOR $m_{t\bmod L}$. This includes inputs changed by the counters on earlier sweeps.
+### Sweeps and alignment
 
-### From commands to a literal starting word
+A sweep reads alternate letters of the queue. A block entered at alignment $p \in \{0, 1\}$ passes $p$ unchanged if its length is even and flips it to $p \oplus 1$ if its length is odd.
 
-A command takes two sweeps. For each counter specify a sign bit on the first sweep (0 for increment, 1 for decrement) and a lane bit on the second. Start with a nonempty even number of commands. Let $L$ be the least power of two at least twice that number. Pad to $L/2$ commands with pairs of all-increment, all-decrement commands, both with zero second-sweep bits. Padding starts at a logical instruction boundary, so the pair cancels.
+Represent the state as a **nominal word** (a concatenation of blocks) with a **cut bit** $p \in \{0, 1\}$; the physical queue is the nominal word minus its first $p$ letters:
+- In a block $w$ entered on lane $u$, concatenate the productions at zero-based indices $u, u+2, \ldots$ to form the next block, and pass $u \oplus (|w| \bmod 2)$ to the next block.
+- The outgoing lane at the end of the word becomes the next sweep's cut bit.
 
-For $r$ counters let $d_j$ be the resulting length-$L$ stream of desired lane bits at counter $j$, interleaving the two sweeps of each command. Write $d_0=d_{r+1}=0$ for all-zero streams and $W=$ `aaaeaeae`. Given initial nonnegative values $v_j$, concatenate, for $j=1$ through $r$, the two words
-$$
- C(d_{j-1}\oplus d_j)\quad W^{2^{4+4v_j}},
-$$
-then append $C(d_r)$ and start at cut zero. XOR acts pointwise. Since the clock masks telescope, the actual lane at counter $j$ equals $d_j$ XOR the starting cut XOR the width parities of earlier data blocks. The outgoing cut equals the starting cut XOR the parities of **all** data blocks. This gives the feedback used by the zero test.
+An even physical length ends cleanly on a two-letter deletion; an odd length leaves one old letter whose deletion also consumes the first newly appended letter, setting the next cut bit to 1. Because the leading clock always emits a full cell on either lane, this boundary crossing is always valid, and each sweep takes $\lceil |q|/2 \rceil$ literal tag steps.
 
-### Counters and conditional instructions
+### Clock cells: differentiators and integrators
 
-At the start of a command a counter is $W^{2^E}$. Lane 0 of $W$ emits `bbbb` and lane 1 emits `b`. An even run of $b$ letters regenerates one $W$ per pair on either lane. Thus the two sweeps change $E$ by $+1$ or $-1$ according to the actual first lane. A decrement at $E=0$ produces a single $b$. Reading that $b$ regenerates one $W$ and leaves $E=0$. Its odd width toggles the cut for the next command. All first-sweep data blocks have even width. On the second sweep only this exceptional run can change a downstream lane, and the other even runs give identical outputs on both lanes.
+Clocks are built from two 1-bit memory cells, each with an even-length **state 0** word and an odd-length **state 1** word:
 
-**A complete zero-guard instruction.** At entry the cut is zero and each logical value $v$ has exponent $4+4v$. To change each passive counter by a specified logical amount $a$ in $\{-1,0,1\}$ if the tested counter is zero, use the following twelve commands. The columns show the programmed signs. Each passive counter gets its own column according to $a$.
-
-| Commands | Tested | Passive $a=+1$ | Passive $a=0$ | Passive $a=-1$ |
+| Cell | State 0 ($s=0$) | State 1 ($s=1$) | Outgoing lane $y$ | Next state $s'$ |
 |---|---|---|---|---|
-| 1–4, remove bias | `----` | `+-+-` | `+-+-` | `+-+-` |
-| 5–6, first probe | `-+` | `+-` | `+-` | `-+` |
-| 7–8, second probe | `-+` | `+-` | `-+` | `-+` |
-| 9–12, restore bias | `++++` | `+-+-` | `+-+-` | `+-+-` |
+| Integrator | `ezII` | `eezII` | $p \oplus s$ | $p \oplus s$ |
+| Differentiator | `DDez` | `DDeze` | $p \oplus s$ | $p$ |
 
-All second-sweep bits are zero except at the tested counter in commands 6 and 8, where the bit is one. After removing the bias the tested exponent is $4v$. If $v>0$, each probe executes its programmed signs and all changes within the pair cancel. If $v=0$, the first decrement in each probe produces a singleton. The cut and the tested second-sweep bit are both zero there, so the singleton is read. The next command starts with cut one and reverses **every** programmed sign. The tested counter decrements again at zero. This time its second-sweep bit is one, so the actual lane is again zero and it regenerates $W$. The second singleton restores cut zero. Earlier passive runs are even, so neither singleton can miss its read.
+Checking positions $0,2,\ldots$ (lane 0) and $1,3,\ldots$ (lane 1) confirms the table: `ezII` $\mapsto$ (`ezII`, `eezII`), `eezII` $\mapsto$ (`eezII`, `ezII`), and both `DDez` and `DDeze` $\mapsto$ (`DDez`, `DDeze`).
 
-Each probe therefore applies its first passive sign twice on the zero branch. Summing the two pairs gives $4a$ exponent units. The bias steps cancel on passive counters and restore the tested counter. They start with at least four exponent units, sufficient for the four probe steps even on a false guard. A requested logical decrement on a true guard requires a positive operand, so the exit again has every exponent at least four. This proves the instruction invariant, including the absence of accidental passive underflow, for any sequence of valid guarded updates.
+In both cells, width parity gives the outgoing bit $y = p \oplus s$. A differentiator therefore stores the previous input ($y_t = p_t \oplus p_{t-1}$), while an integrator stores the previous output ($y_t = p_t \oplus y_{t-1}$). Working over $\mathbb{F}_2[[X]]$—where $X$ delays a bit stream by one sweep—their zero-state input-output maps are:
 
-### Example programs
+- **Differentiator:** multiplication by $1 + X$
+- **Integrator:** division by $1 + X$
 
-**Double a block.** Start with just one copy of `W = aaaeaeae`. This is small enough to run by hand. Each arrow below is one literal tag step.
+Putting a bank of $L$ differentiators in front of $L$ integrators cancels their transfer functions on any incoming stream, leaving a block that passes arbitrary incoming parity straight through while XORing in a periodic mask determined by the integrators' initial seeds.
+
+### Clock construction and seed formula
+
+For a bitmask $m_0, \ldots, m_{L-1}$ whose period $L$ is a power of two, define the literal clock word $C(m)$ as:
+
+1. $L$ copies of `DDez` (all differentiators initialized to 0), followed by
+2. $L$ integrators for $i = 0, \ldots, L-1$, using `eezII` if seed bit $i$ is 1 and `ezII` if it is 0.
+
+To compute seed bit $i$, XOR all $m_j$ for which the set bits of $i$ are a subset of the set bits of $j$:
+$$
+\mathrm{seed}_i = \bigoplus_{i \subseteq j} m_j.
+$$
+
+**Proof.** First set all seeds to zero; the $L$ differentiators and $L$ integrators cancel on every input stream. Now turn on seed $i$ alone. On zero input, cell $i$ emits the constant stream $1 + X + X^2 + \cdots = (1+X)^{-1}$, and $L - 1 - i$ integrators follow it. Its contribution to the output is:
+$$
+(1+X)^{-(L-i)} = \frac{(1+X)^i}{1 + X^L}.
+$$
+The denominator $1 + X^L$ repeats the numerator every $L$ sweeps. Factoring $(1+X)^i = \prod_{k \in \mathrm{bits}(i)} (1 + X^{2^k})$ over $\mathbb{F}_2$ shows that the numerator has a 1 at precisely the indices $t$ whose set bits are a subset of $i$'s. Thus the output at sweep $t < L$ XORs the seeds over all supersets $i \supseteq t$.
+
+Applying this superset-XOR transform twice counts each superset $j \supseteq t$ once for every intermediate subset $i$ with $t \subseteq i \subseteq j$. That count is $2^{|j \setminus t|}$, which is odd if and only if $j = t$—so the transform is its own inverse. By linearity over $\mathbb{F}_2$, on **any** incoming stream the outgoing bit at sweep $t$ is the incoming bit XOR $m_{t \bmod L}$. Crucially, this holds even when earlier counters modify the incoming stream dynamically.
+
+---
+
+## Building a starting queue
+
+Each **command** takes two sweeps, specifying a first-sweep sign bit ($0$ = increment, $1$ = decrement) and a second-sweep lane bit for each counter. Given a nonempty even number of commands, let $L$ be the smallest power of two at least twice that count, and pad to $L/2$ commands with cancelling pairs of all-increment / all-decrement commands (zero second-sweep bits) starting at a logical instruction boundary.
+
+For $r$ counters, let $d_j$ be the length-$L$ stream of desired lane bits at counter $j$ (interleaving both sweeps of each command), with $d_0 = d_{r+1} = 0$. Writing $W = \texttt{aaaeaeae}$, the starting queue for initial values $v_1, \ldots, v_r \ge 0$ is:
+
+$$
+C(d_0 \oplus d_1)\; W^{2^{4+4v_1}}\; C(d_1 \oplus d_2)\; W^{2^{4+4v_2}}\; \cdots\; C(d_{r-1} \oplus d_r)\; W^{2^{4+4v_r}}\; C(d_r)
+$$
+
+started at cut bit $0$ (pointwise XOR). Because the clock masks telescope, counter $j$ sees $d_j$ XOR the starting cut XOR the width parities of earlier data blocks, and the outgoing cut is the starting cut XOR the parities of **all** data blocks—providing the feedback channel for the zero test.
+
+---
+
+## Counters and guarded instructions
+
+### Exponential counters and underflow feedback
+
+At the start of a command, a counter holding exponent $E \ge 0$ is the word $W^{2^E}$. Tracing the two lanes of a single tile $W = \texttt{aaaeaeae}$:
+
+- **Lane 0 (increment):** reads `a, a, a, a` $\to$ `bbbb`.
+- **Lane 1 (decrement):** reads `a, e, e, e` $\to$ `b`.
+
+On the second sweep, any **even** run of `b` letters regenerates one copy of $W$ per pair on either lane (both lane 0 and lane 1 read half the `b`s). Therefore:
+- Lane 0 turns $W^{2^E}$ into $b^{4 \cdot 2^E}$ and then $W^{2^{E+1}}$, incrementing $E$ by $1$.
+- Lane 1 with $E \ge 1$ turns $W^{2^E}$ into $b^{2^E}$ (still even) and then $W^{2^{E-1}}$, decrementing $E$ by $1$.
+- **Underflow ($E = 0$, lane 1):** $W^1$ turns into a single `b`. On the second sweep, reading that `b` (on lane 0) regenerates $W^1$—leaving $E = 0$—and because `|b| = 1` is odd, it **toggles the cut bit** for the next command.
+
+Notice two clean invariants: every first-sweep data block has even width ($8 \cdot 2^E$), and on the second sweep only this singleton `b` can alter a downstream lane—while all other (even) runs produce the same output regardless of lane.
+
+### A 12-command zero-guard instruction
+
+At the start of a logical instruction, the cut is $0$ and each logical counter value $v \ge 0$ is stored with exponent $E = 4 + 4v$ (a bias of 4, scaled by 4).
+
+To update every passive counter by a chosen logical delta $a \in \{-1, 0, +1\}$ **if and only if** a designated tested counter is zero, emit the following 12 commands. The columns show the programmed first-sweep signs (`+` = lane 0, `-` = lane 1); each passive counter uses the column matching its target delta $a$:
+
+| Commands | Tested | Passive ($a=+1$) | Passive ($a=0$) | Passive ($a=-1$) |
+|---|---|---|---|---|
+| 1–4 (remove bias) | `----` | `+-+-` | `+-+-` | `+-+-` |
+| 5–6 (first probe) | `-+` | `+-` | `+-` | `-+` |
+| 7–8 (second probe) | `-+` | `+-` | `-+` | `-+` |
+| 9–12 (restore bias) | `++++` | `+-+-` | `+-+-` | `+-+-` |
+
+All second-sweep lane bits are `0`, **except** at the tested counter in commands 6 and 8, where the bit is `1`.
+
+Let's trace both branches after commands 1–4 remove the bias of 4 from the tested counter (leaving exponent $4v$):
+
+- **Nonzero branch ($v > 0$):** The tested counter has exponent $4v \ge 4$, so no underflow occurs. Every probe executes its programmed signs, and each pair cancels on every counter. Commands 9–12 restore the bias, leaving all counters unchanged.
+- **Zero branch ($v = 0$):** In each probe (5–6 and 7–8), the first `-` hits $E = 0$ and emits a singleton `b`. Both the cut and the tested counter's second-sweep bit are `0`, so the singleton is read, regenerates $W$, and flips the cut to `1` for the next command. That flipped cut reverses **every** programmed sign in the second command of the probe:
+  - the tested counter's `+` becomes `-`, decrementing at $E = 0$ again; its second-sweep bit is `1`, canceling the cut `1` so the singleton is read on lane 0 again, regenerating $W$ and flipping the cut back to `0`;
+  - every passive counter executes the opposite of its second programmed sign—which equals its **first** programmed sign, applying it twice.
+
+Summing the two probes on the zero branch changes each passive exponent by $+2 + 2 = +4$ (for $a=+1$), $+2 - 2 = 0$ (for $a=0$), or $-2 - 2 = -4$ (for $a=-1$), i.e., $4a$ exponent units—one logical step.
+
+Because every passive counter enters with exponent at least $4$, it can absorb the intermediate probe steps without ever hitting $E = 0$, even on a false guard. A requested logical decrement ($a = -1$) on a true guard requires a positive logical operand ($v \ge 1$, exponent $\ge 8$), so every counter again exits with exponent at least $4$. This preserves the invariant across any sequence of valid guarded updates.
+
+---
+
+## Examples
+
+### Doubling a block by hand
+
+Start with a single copy of $W = \texttt{aaaeaeae}$. Each arrow below is one literal 2-tag step:
 
 ```text
 aaaeaeae → aeaeaeb → aeaebb → aebbb → bbbb
 bbbb → bbaaaeaeae → aaaeaeaeaaaeaeae
 ```
 
-The first sweep reads four `a`s. The second reads two `b`s and leaves exactly two copies of `W`. Starting with any positive number of copies gives the same doubling in two sweeps, since each tile has even width and its four output letters also have even width.
+The first sweep reads four `a`s (producing `bbbb`); the second reads two `b`s and leaves two copies of $W$. Starting with any positive number of copies doubles them in two sweeps, since both $W$ and `bbbb` have even length.
 
-**Count periods with a zero guard.** The source instruction is “if X is zero, increment Y.” The following Python builds the initial queue and checks two periods against the literal productions on both branches.
+### Counting periods with a zero guard
+
+Consider the instruction *"if $X = 0$, increment $Y$."* The Python snippet below compiles this instruction and verifies two full periods against literal 2-tag execution on both branches:
 
 ```python
 from parity_program import compile_program, guarded, verify
@@ -80,27 +159,28 @@ verify(rows, [0, 0], lambda n: [0, n], 2)
 verify(rows, [1, 0], lambda n: [1, 0], 2)
 ```
 
-One period takes 32 sweeps. Starting at `(0,0)`, the first two checkpoints are `(0,1)` and `(0,2)`. You can see the first increment in the queue itself. Its Y block goes from 16 copies of `W` to 256. Starting at `(1,0)` keeps Y at 16 copies on both checkpoints.
+One period takes 32 sweeps. Starting at `(0, 0)`, the first two checkpoints are `(0, 1)` and `(0, 2)`—you can see the first increment directly in the queue as the $Y$ block grows from 16 copies of $W$ to 256. Starting at `(1, 0)` keeps $Y$ at 16 copies at both checkpoints.
 
-**FizzBuzz.** Run `python3 -B six_symbol_fizzbuzz.py` to print the first 100 outputs. The same starting queue can continue indefinitely. Its first 16 outputs cross the first clock reset.
+### FizzBuzz
+
+Run `python3 -B six_symbol_fizzbuzz.py` to print the first 100 outputs of FizzBuzz directly from a single starting queue (which can run indefinitely). The first 16 outputs cross the first clock reset:
 
 ```text
 1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz 16
 ```
 
-The literal initial input (see end) is one line of 2,128 tag letters. Its first letter is the head of the queue. Run `python3 -B six_symbol_fizzbuzz.py --initial` to print the same word. Use `--steps 3` to print four full queues, starting at step zero. The first step reads `D`, deletes the leading `DD`, and appends `DDez`.
+The literal starting queue (reproduced in full in the [appendix](#appendix-fizzbuzz-input)) is 2,128 letters long, with its first letter at the head of the queue. Run `python3 -B six_symbol_fizzbuzz.py --initial` to print it, or `--steps 3` to inspect the first four full queues starting at step 0 (step 1 reads `D`, deletes `DD`, and appends `DDez`).
 
-The queue contains three clocks, a data block initially equal to one `W`, and a fourth clock. Each clock period has sixteen slots of four sweeps. Slots 1 through 15 emit a token. On the first sweep of each slot, the alignment after clock one signals Fizz at slots 3, 6, 9, 12, 15. The alignment after clock two signals Buzz at slots 5, 10, 15. Both bits can be set. Since 15 is a multiple of both divisors, the same masks work on every lap.
+**How the queue works.** The queue consists of three clocks, a data block initially equal to one $W$, and a fourth clock. Each clock period has 16 slots of 4 sweeps (64 sweeps total):
+- **Slots 1–15** emit one output token each. On sweep 0 of each slot, the alignment after clock 1 signals `Fizz` (at slots 3, 6, 9, 12, 15), and the alignment after clock 2 signals `Buzz` (at slots 5, 10, 15). Because 15 is a multiple of both 3 and 5, the same masks repeat on every lap.
+- **Counting:** in each emitting slot, the data block doubles twice, so after output $n$ it holds exactly $4^n$ copies of $W$. When neither flag is set, the number is decoded as $\log_4(\text{copies of } W)$.
+- **Slot 16** doubles once and halves once, emits nothing, and leaves the count ready for the next lap. Clock 4 restores alignment 0.
 
-**Reconstructing the 2,128-letter input.** Number the sweeps $t=4(s-1)+u$ with slot $1\le s\le16$ and offset $0\le u<4$. Define three 64-bit masks. Set $F_t=1$ at offset 0 of the five Fizz slots above, $B_t=1$ at offset 0 of the three Buzz slots, and $A_t=1$ only at slot 16, offset 2. All other bits are zero. The literal initial word, in concatenation notation, is
-$$
- C(F)\ C(F\oplus B)\ C(B\oplus A)\ W\ C(A).
-$$
-For a direct expansion, the four integrator seed vectors in that order are `0101101101101101`, `0000110100101010`, `5454544554555444`, and `5555555555555555` in hexadecimal, with cell 0 given by the least significant bit. Before each vector put 64 copies of `DDez`, then expand its 64 cells by the clock rule above. The word lengths are $522+518+536+8+544=2128$. At offset 0 the first two outgoing lanes give $F_t,B_t$, and the data lane on every sweep is $A_t$. The last clock cancels it because the data run is even on all these sweeps (a sparse read occurs only after a doubling). Hence the next cut stays zero. This establishes the alignment assumption for every slot by induction.
+The runner applies the six productions literally to the clock words while storing the repeated data tile and its multiplicity symbolically (avoiding expanding $4^{100}$ tiles at output 100). See [six_symbol_fizzbuzz.py](six_symbol_fizzbuzz.py), and the [appendix](#appendix-fizzbuzz-input) for the bitmask reconstruction and literal 2,128-letter word.
 
-The number itself lives in the queue. In each emitting slot the data block doubles twice, so after output number `n` it contains exactly `4**n` copies of `W`. If both flags are clear, decode that count by taking its base-four logarithm. Slot 16 doubles once and halves once, emits nothing, and leaves the count ready for the next lap. The fourth clock restores the starting alignment. The runner applies the six productions to the clock words and stores the repeated data tile and its exact multiplicity separately. At output 100 that saves expanding `4**100` tiles. [Runnable FizzBuzz program](six_symbol_fizzbuzz.py)
+### Increment once and halt
 
-**Increment once and halt.** Give the source machine one edge, from entry `s` to halt `h`, which increments X. The compiler adds the return trip.
+Give a source machine a single edge from entry `s` to halt `h` that increments $X$. The compiler automatically adds the return trip:
 
 ```python
 from parity_program import bouncing_machine, compile_program
@@ -110,65 +190,100 @@ rows, values = bouncing_machine(["s", "h"], "s", "h", [0],
 word, commands = compile_program(rows, values)
 ```
 
-| Completed periods | Direction | Source state | X |
+| Completed periods | Direction | Source state | $X$ |
 |---:|---|---|---:|
-| 0 | Forward | s | 0 |
-| 1 | Forward | h | 1 |
-| 2 | Backward | h | 1 |
-| 3 | Backward | s | 0 |
-| 4 | Forward | s | 0 |
-| 5 | Forward | h | 1 |
+| 0 | Forward | `s` | 0 |
+| 1 | Forward | `h` | 1 |
+| 2 | Backward | `h` | 1 |
+| 3 | Backward | `s` | 0 |
+| 4 | Forward | `s` | 0 |
+| 5 | Forward | `h` | 1 |
 
-The source reaches halt after one period. The tag queue keeps running. At checkpoints 1 and 5 the entire words match, including every clock cell. Those checkpoints are 2,048 sweeps apart (four periods of 512 sweeps). Run `python3 -B parity_program.py` to reproduce the whole-queue comparison and the guarded-counter checks.
+The source machine halts after one period, while the tag queue continues running. At checkpoints 1 and 5—2,048 sweeps apart (four periods of 512 sweeps)—the entire queues match identically, including every clock cell. Run `python3 -B parity_program.py` to reproduce both this whole-queue comparison and the guarded-counter checks.
 
-### From counter machines to exact cycles
+---
 
-The reduction has two stages. A front end turns an ordinary deterministic counter machine into a reversible one. A compiler then turns the reversible machine into a tag queue.
+## From counter machines to exact cycles
 
-**Source machines.** A counter machine has nonnegative registers and finitely many edges. Each edge tests zero or positive, increments, decrements a positive register, or leaves the registers alone. The source must be deterministic, meaning at most one edge is enabled at any configuration. Its entry has no incoming edge and its halt has no outgoing edge. Every nonhalting configuration has an enabled edge, whether or not it is reachable. Minsky's machines take this form once a fresh start state is added, since "increment and go to" and "decrement, or jump if zero" always apply. These are conditions on the program, not on a particular run.
+The universality reduction proceeds in two stages: a **front end** turns an ordinary deterministic counter machine into a reversible one, and a **compiler** turns the reversible machine into a tag queue.
 
-**Making the source reversible.** Add a history register $H$ and a work register $K$, both initially zero. Number the $N$ source edges $0,\ldots,N-1$. Each source step along edge $e$ into state $q$ runs a gadget.
+### Source machines
 
-1. Apply the operation of $e$ and move to a state used only by $e$. Test $K=0$ there.
-2. Move $H$ into $K$ one unit at a time.
-3. Enter the shared loop of $q$ at position $\mathrm{idx}(e)$. From position $k$ the loop adds $N+1-k$ to $H$ and reaches the loop head. Each pass through the head moves one unit out of $K$ and adds $N+1$ to $H$. When $K$ is empty the loop exits to $q$.
+A counter machine has nonnegative integer registers and finitely many edges. Each edge either tests a register for zero or positive, increments a register, decrements a positive register, or does nothing (no-op). We require the source machine to be:
+- **deterministic** (at most one edge enabled at any configuration),
+- **normalized** (its entry state has no incoming edges; its halt state has no outgoing edges), and
+- **total on nonhalting states** (every nonhalting configuration, reachable or not, has an enabled edge).
 
-The result is $H\mapsto(N+1)H+(N+1-\mathrm{idx}(e))$. The remainder identifies the edge that entered $q$, so every source step can be undone. Each gadget state has at most two incoming edges, and they are told apart by a zero test against a positive test or increment of the same register. One-sided tests remain, namely the test $K=0$ in step 1 and the positivity tests on $H$ inside the loop. They pass on every run because $K$ is zero between source steps and $H$ is positive inside the loop. The resulting machine halts exactly when the source does. Morita's Theorem 3.1 gives another front end of this kind, using a doubling history counter. [Morita, 1996](https://doi.org/10.1016/0304-3975(96)00081-3)
+Standard Minsky counter machines ("increment and go to", "decrement, or jump if zero") satisfy these conditions once a fresh entry state is added. Note that these are syntactic conditions on the machine, not on a particular run.
 
-**Reversible machines.** The compiler below takes a deterministic counter machine with distinct entry and halt states, no incoming entry edge, no outgoing halt edge, and an enabled edge at each reachable nonhalting configuration. Distinct edges must have disjoint enabled domains at a common source and disjoint images at a common destination. The front end produces machines of exactly this form. From here on, "the source" means this reversible machine.
+### Making the source reversible
 
-**One source step per period.** In addition to the data registers, allocate a flag for each state (0 active, 1 inactive), a latch for each edge (initially 1), and a permanent zero register for unconditional updates. Initialize only the entry flag to 0 among the state flags. Use the twelve-command instruction above for every update below.
+To make an arbitrary source machine reversible, add a **history register** $H$ and a **work register** $K$, both initialized to $0$. Number the $N$ source edges $0, \ldots, N-1$. Conceptually, $H$ acts as a base-$(N+1)$ stack recording the sequence of edges taken so far.
 
-1. **Select.** For each edge, temporarily add a mismatch bit to its source flag. For a positive test or decrement, add 1 if its operand is zero. For a zero test, add 1 unconditionally then subtract 1 if the operand is zero. Increment and no-op have mismatch zero. Decrement the edge latch if the resulting flag is zero, then undo the mismatch operations in reverse order with opposite signs. Exactly the enabled edge now has latch 0.
-2. **Apply.** For each edge, guarded by its latch being zero, add 1 to its source flag, subtract 1 from its destination flag, and apply its data change. Combine updates to the same flag before emission, so a self-loop changes no flag. Exactly one edge fires and the new state has the unique zero flag.
-3. **Clear.** For each edge use its destination flag and the guard of its inverse to select as in step 1, this time **incrementing** its latch. Tests retain their predicates, the inverse of increment requires a positive result, and the inverse of decrement is an unconditional increment. No-op is its own inverse. Disjoint images ensure that exactly the edge just taken passes. All latches are again 1, all temporary flags are restored, and the permanent zero remains zero.
+Each source edge $e$ into state $q$ is replaced by a three-step gadget:
+1. Apply the operation of $e$ and move to a private state unique to $e$; test $K = 0$ there.
+2. Transfer $H$ into $K$ one unit at a time.
+3. Enter a shared loop belonging to $q$ at offset $\mathrm{idx}(e)$. From offset $k$, the loop adds $N + 1 - k$ to $H$ and reaches the loop head; each pass through the head moves one unit from $K$ and adds $N + 1$ to $H$. When $K = 0$, the loop exits to $q$.
 
-All controls are distinct from their update targets. Every enabled subtraction has a positive operand by the flag, latch, or source-machine invariant. The scans are finite and fixed at compile time. Concatenate their commands, omit empty updates, and pad as above. Induction on periods now gives the simulated configuration at every checkpoint.
+The net effect on the history register is:
+$$
+H \;\longmapsto\; (N+1)H + (N + 1 - \mathrm{idx}(e)).
+$$
+The remainder modulo $N + 1$ uniquely identifies which edge entered $q$, making every step invertible. Every gadget state has at most two incoming edges, distinguished by a zero test against a positive test or increment on the same register. The remaining one-sided tests ($K = 0$ in step 1 and $H > 0$ inside the loop) always succeed on runs starting from $H = K = 0$. The resulting machine halts if and only if the source does. (For an alternative front end using a doubling history counter, see [Morita, 1996](https://doi.org/10.1016/0304-3975(96)00081-3), Theorem 3.1.)
 
-**Halt as exact queue repetition.** Make forward and backward copies of every source state. Keep the original edges in the forward copy and reverse each edge with its inverse operation in the backward copy. Add a no-op from forward halt to backward halt and another from backward entry to forward entry. The missing edges at entry and halt make both turns unambiguous in either direction. Start at forward entry.
+### Compiling a reversible machine (one step per period)
 
-If the source halts, this machine runs along a finite path and back, repeatedly. Checkpoint counters are bounded. Within a period each exponent can increase by at most the fixed number of commands, and each clock cell has width four or five. Intermediate tag queues are bounded too, since during a sweep they consist of an old suffix and part of the bounded next word. The leading clock sustains every sweep. Finitely many bounded words on a finite alphabet force exact repetition.
+The compiler takes a deterministic counter machine with distinct entry and halt states (no incoming entry edge, no outgoing halt edge), an enabled edge at every reachable nonhalting configuration, disjoint enabled domains at each source state, and disjoint images at each destination state. The front end produces machines of exactly this form. From here on, "the source" refers to this reversible machine.
 
-If the source runs forever, its forward trajectory has no repeated configuration. Injectivity would pull a repetition back to a predecessor of the fresh entry. Finite control then forces unbounded counters at checkpoints, hence unbounded physical queue lengths. Any exact repetition at any tag step would give a periodic deterministic tail with bounded lengths, a contradiction. This proves both directions using only the six fixed productions. The reference implementation is [parity_program.py](parity_program.py).
+Alongside the data registers, the compiler allocates:
+- a **state flag** for each state ($0$ = active, $1$ = inactive; only the entry flag starts at $0$),
+- an **edge latch** for each edge (all initially $1$), and
+- a **permanent zero register** (for unconditional updates).
 
-### Checking the equivalence in Lean
+Every update below uses the 12-command zero-guard instruction. One compiled period executes one source step in three phases:
 
-Two files carry the proof, one for each stage. [SixSymbol.lean](SixSymbol.lean) compiles a reversible machine into the tag system. [ReversibleCounter.lean](ReversibleCounter.lean) builds the front end and composes the two stages. It imports the first file without changing it.
+1. **Select.** For each edge, temporarily add a mismatch bit to its source flag:
+   - *positive test or decrement:* add $1$ if the operand is $0$;
+   - *zero test:* add $1$ unconditionally, then subtract $1$ if the operand is $0$;
+   - *increment or no-op:* mismatch is $0$.
 
-**The end-to-end theorem is `ReversibleCounter.halt_iff_exact_cycle`.** For a source machine `m` with `std : Standard m` and an input register file, Lean proves this statement about the computed starting word.
+   Decrement the edge's latch if the resulting source flag is $0$, then undo the mismatch updates in reverse order with opposite signs. Exactly the single enabled edge now has latch $0$.
+2. **Apply.** For each edge, guarded by its latch being $0$, add $1$ to its source flag, subtract $1$ from its destination flag, and apply its data operation (combining updates to the same flag first, so self-loops leave flags unchanged). Exactly one edge fires, leaving the new state as the unique $0$ flag.
+3. **Clear.** For each edge, run the selection test using its *destination* flag and the guard of its *inverse* operation, this time **incrementing** its latch. (Tests keep their predicates; the inverse of increment requires a positive result; the inverse of decrement is an unconditional increment; no-op is its own inverse.) Because edges into a destination have disjoint images, only the edge just taken passes—restoring all latches to $1$, all temporary flags, and the permanent zero.
+
+All control registers are distinct from their update targets, and every enabled subtraction acts on a positive operand by the flag, latch, and source-machine invariants. The three scans are finite and fixed at compile time; concatenating their commands, dropping empty updates, and padding to a power-of-two period yields the compiled queue. Induction on periods confirms that the simulated configuration matches at every checkpoint.
+
+### Turning halting into exact queue repetition
+
+Create **forward** and **backward** copies of every source state. Keep the original edges in the forward copy, and reverse every edge (with its inverse operation) in the backward copy. Add two no-op turnarounds:
+- from forward halt to backward halt, and
+- from backward entry to forward entry.
+
+Because entry has no incoming edge and halt has no outgoing edge, both turns are unambiguous in either direction. Start at forward entry.
+
+- **If the source halts:** the bouncing machine traverses a finite path to halt and back, repeatedly. Checkpoint register values stay bounded. Within any period, each counter exponent can grow by at most the fixed number of commands, and each clock cell has width 4 or 5. Intermediate queues during a sweep consist of an old suffix plus part of the bounded next word, so physical queue length is globally bounded. Since the leading clock sustains every sweep and there are only finitely many words of bounded length over a finite alphabet, the deterministic run must eventually repeat a word identically.
+- **If the source diverges:** its forward trajectory never repeats a configuration (by injectivity, any repetition would pull back to a predecessor of the fresh entry state, which does not exist). With finitely many control states, the registers must grow unboundedly across checkpoints, forcing unbounded physical queue lengths. An exact repetition at any tag step would trap the deterministic system in a periodic tail of bounded length—a contradiction.
+
+This establishes both directions of the equivalence using only the six fixed productions. The reference Python implementation for the reversible stage is in [parity_program.py](parity_program.py).
+
+---
+
+## Formal verification in Lean
+
+Two Lean 4 files carry the full mechanized proof: [SixSymbol.lean](SixSymbol.lean) compiles a reversible machine into the tag system, and [ReversibleCounter.lean](ReversibleCounter.lean) builds the reversible front end and composes both stages (importing `SixSymbol.lean` unchanged).
+
+**End-to-end theorem (`ReversibleCounter.halt_iff_exact_cycle`).** For any source machine `m` with `std : Standard m` and input register file `input`:
 
 ```lean
 (∃ n, (m.path input n).pc = m.halt) ↔
   ExactCycle (encode (rev m std.fresh) (liftInput input))
 ```
 
-Read `∃ n` as “at some source step” and `↔` as “if and only if.” On the right, `ExactCycle w` requires two different tag-step counts at which the run from `w` successfully reaches the same whole word. Reaching a short queue twice by treating it as stationary would fail this definition. `Standard m` states the source conditions above: fresh entry, terminal halt, determinism, and an enabled edge at every nonhalting configuration. `rev m` is the reversible front end, and `liftInput` starts it with $H=K=0$. The encoder computes its word from the machine and input alone.
+`ExactCycle w` requires two distinct tag-step counts reaching the same whole queue (stalling on a short queue does not count). `rev m` is the reversible front end, `liftInput` initializes $H = K = 0$, and `encode` computes the starting queue from the machine and input alone. The intermediate theorem `SixSymbol.halt_iff_exact_cycle` proves the same equivalence directly for `encode m input` under `Reversible m` and `m.live input`, both of which `ReversibleCounter.lean` discharges for `rev m`.
 
-**The reversible stage is `SixSymbol.halt_iff_exact_cycle`.** It states the same equivalence for a reversible machine, with `encode m input` on the right, under two hypotheses. `Reversible m` says that entry has no incoming edge, halt has no outgoing edge, and the enabled edges are forward- and backward-deterministic. `m.live input` says that each reachable nonhalting configuration can step. The second file proves both hypotheses for `rev m`, so neither appears in the end-to-end theorem.
+Each file ends with a concrete check: `SixSymbol.Example.input_positive_iff_cycle` proves `0 < x ↔ ExactCycle (encode Example.machine (fun _ => x))` for all natural numbers `x`, and `ReversibleCounter.Example.machine` proves a non-reversible `Standard` machine produces an exact cycle on input `3`.
 
-Each file ends with a small example. `SixSymbol.Example.input_positive_iff_cycle` has three reversible source edges. They send a positive input straight to halt and a zero input into a loop that increments forever. Lean proves `0 < x ↔ ExactCycle (encode Example.machine (fun _ => x))` for **every** natural number `x`. `ReversibleCounter.Example.machine` empties its register and halts. Lean proves that it is `Standard` but not `Reversible`, and derives an exact cycle on input 3 through the end-to-end theorem.
-
-To recheck both files with Lean 4.19 and its standard library, run these commands from the project directory. Elan uses the adjacent `lean-toolchain` file to select the version. The second file imports the compiled first file from `build/`.
+**Rechecking locally** (Lean 4.19 via `lean-toolchain`; both main theorems use only `propext`, `Classical.choice`, and `Quot.sound`, with no `sorryAx`—see [Lean’s guide to checking proofs](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)):
 
 ```sh
 lean SixSymbol.lean
@@ -177,49 +292,54 @@ lean -o build/SixSymbol.olean SixSymbol.lean
 LEAN_PATH=build lean ReversibleCounter.lean
 ```
 
-The lines for both `halt_iff_exact_cycle` theorems report the standard foundational axioms `propext`, `Classical.choice`, and `Quot.sound`. A proof placeholder would add `sorryAx` to this list. [Lean’s guide to checking proofs](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)
-
-The first five rows are in `SixSymbol.lean` and the last three in `ReversibleCounter.lean`.
+The first five rows are in `SixSymbol.lean`, the last three in `ReversibleCounter.lean`:
 
 | Theorem | What Lean checks |
 |---|---|
-| `seeded_clock`, `layout_sweep` | A seeded clock emits the selected periodic mask on either lane. Each whole-layout sweep consists of literal tag deletions, including the crossing at an odd boundary. |
-| `gate_realized`, `compiled_periods` | The two-sweep commands execute the twelve-command guard on a register bank. The padded program executes successive periods on one queue. |
-| `compiled_repeats_iff` | The queue repeats exactly when the register files at period boundaries range over a finite set. Clock memories can vary between visits. |
-| `one_period`, `checkpoint_edge` | Selection, update, and latch clearing implement the enabled forward or inverse transition. The turns at halt and entry realize the bouncing trajectory. |
-| `halt_iff_exact_cycle` | A halting run visits finitely many source configurations in both directions. Repetition on an infinite forward run would contradict reversibility and fresh entry. |
-| `rev_reversible` | The front end has a fresh entry and a terminal halt, and its edges are forward- and backward-deterministic. |
-| `rev_live` | The run invariant ($K=0$ between source steps, $H>0$ inside the loop) leaves an enabled edge at every reachable nonhalting configuration. |
-| `rev_of_halt`, `halt_of_rev` | Each source step completes after a finite gadget run. Every front-end configuration is working on a configuration of the source path. Hence the two machines halt together. |
+| `seeded_clock`, `layout_sweep` | A seeded clock emits its periodic mask on either lane; each whole-layout sweep consists of literal tag steps, including odd-boundary crossings. |
+| `gate_realized`, `compiled_periods` | Two-sweep commands realize the 12-command zero guard on a register bank, and the padded program executes successive periods on one queue. |
+| `compiled_repeats_iff` | The queue repeats identically iff register files at period boundaries stay within a finite set (even if clock memories vary between visits). |
+| `one_period`, `checkpoint_edge` | Select, Apply, and Clear realize the enabled forward or inverse transition; the turns at halt and entry realize the bouncing trajectory. |
+| `halt_iff_exact_cycle` | Halting visits finitely many configurations in both directions; repetition on an infinite forward run contradicts reversibility and fresh entry. |
+| `rev_reversible` | The front end has a fresh entry, terminal halt, and forward- and backward-deterministic edges. |
+| `rev_live` | The run invariant ($K = 0$ between source steps, $H > 0$ inside the loop) ensures an enabled edge at every reachable nonhalting configuration. |
+| `rev_of_halt`, `halt_of_rev` | Each source step finishes in a finite gadget run, and every front-end state tracks a source configuration, so both machines halt together. |
 
-The formal reduction covers the front end, the tag system and the encoder. The remaining external premise is Minsky's theorem that deterministic counter machines are universal. It is used with the routine normalization to a fresh entry and a terminal halt, which is not formalized. Morita's reversible simulation is no longer needed. The Python implementation in [parity_program.py](parity_program.py) is an executable reference for the reversible stage only. It takes reversible machines directly and does not implement the front end. (M. Minsky, *Computation: Finite and Infinite Machines*, 1967.)
-
-### Is six minimal?
-
-Fix deletion number two, one production table, finite starting queues, and exact queue repetition as the observable. Ask for the least alphabet size for which a total computable encoder maps each machine and input to a queue that eventually repeats exactly when the machine halts. Count every letter in the table, including an eraser. Allow arbitrary finite appendants and queue encodings. Under this definition the construction gives an upper bound of six.
-
-There is a lower bound *for this clock design*. Reserve two letters for data and require a disjoint, closed clock alphabet containing an eraser. Require each clock cell to use two fixed state words of opposite length parity and to regenerate the prescribed state word in one sweep on either alignment. The three-letter clock obstruction shows that no such three-letter alphabet can implement both the integrator and differentiator with one table. These requirements therefore cost at least four clock letters plus two data letters, and the displayed table attains six. [Clock obstruction proof](clock_obstruction.tex)
-
-**Proof of the clock restriction.** Write $A,B$ for the two letters besides the eraser. Let $M$ be the two-by-two matrix whose column for a letter counts the occurrences of $A,B$ in its appendant. Let $c_0,c_1$ count them in the even and odd state words of either proposed cell. From either word the two lanes output the two state words once each. Adding their counts gives $Mc_0=Mc_1=c_0+c_1$. If $M$ were invertible we would have $c_0=c_1$. The two lanes of a given word would then also select identical count vectors, since their images under $M$ agree. Their outputs would have equal lengths, contradicting the opposite state parities. Thus $M$ is singular and its nonzero vector $c_0+c_1$ has eigenvalue two. A cell consisting entirely of erasers could never regenerate its odd word.
-
-*If both off-diagonal entries are positive*, trace two and determinant zero force all four entries to be one. Each of the two appendants contains one $A$ and one $B$. Each state word, being an output, consists of copies of those appendants. Each copy contributes one of each letter, and the count equation gives the same number $n>0$ of copies in both states. Use the parsing induced by production on each sweep.
-
-- If both types of copy place their two live letters in a single lane, selecting a copy emits one appendant of each type. The output has $n$ copies and hence fixed length.
-- If exactly one type places both in a single lane, exactly half of its copies must be selected to preserve the total of $n$. Its multiplicity is even in either state. The other multiplicity has parity $n\bmod 2$, so both states have the same width parity.
-- Otherwise each copy has one live letter per lane, and each regenerates exactly one copy. The two types must have opposite widths modulo two for the state parities to differ. Label a copy by its width bit $s$. With incoming bit $u$ it passes $u+s$ and produces type $u+f(s)$ for a fixed Boolean function $f$. Compare two input histories from the same initial word. If $f$ is constant, each copy has difference transfer $1+X$ by the differentiator recurrence. If $f(s)=s+c$, each has transfer $(1+X)^{-1}$ by the integrator recurrence. All copies use the same rule. A row of $n$ has the corresponding $n$th power. No positive powers of just one of these transfers can realize both required transfers, even allowing the two cells different lengths.
-
-*If an off-diagonal entry is zero*, the diagonal entries are two and zero. Call the letter with diagonal two $G$, its appendant $V$, and the remaining letter $H$. If $V$ lacks $H$, neither appendant produces $H$, so $H$ is absent from both state words. Otherwise triangularity forces $H$ to emit only erasers. In either case every state word has a production parsing into $n$ copies of $V$ with intervening or exterior erasers. Each copy contains two $G$s. Counting $G$s across both lanes gives the same $n>0$ in both states.
-
-If both $G$s occupy the same lane within $V$, half the copies must see each alignment to produce $n$ new copies. Thus the total number of selected auxiliary letters inside copies is fixed as well. Exterior erasers emit nothing. Both outputs have the same length.
-
-If the $G$s occupy opposite lanes, each copy reproduces once, with a prefix and suffix of erasers emitted by the selected auxiliary letters in that copy. Keep these erasers attached to their producing copy. Let $f,g$ give the parities of the new prefix and suffix as functions of the alignment at $V$, with Boolean slopes $a,b$ respectively. For two histories starting from the same word, call the differences at the start of this block, at its core $V$, and at its end $u,p,v$. The previous sweep determined today's padding, while the core has fixed width. Hence $p=u+aXp$ and $v=p+bXp$. Each copy has difference transfer $(1+bX)/(1+aX)$, equal to $1$, $1+X$, or its inverse. All copies again use the same transfer. Its positive powers cannot supply both desired cells. This exhausts the possible matrices and proves the restricted lower bound.
-
-For five symbols there are two instructive cases. Removing `D` gives an integrator-only compiler that can match the counter blocks for any chosen finite horizon by enlarging the initial clock. Indeed, for a power of two $K$ at least the horizon and divisible by the original period, repeat each mask to length $K$ and seed just $K$ integrators. Their zero-state transfer is $(1+X)^{-K}=1/(1+X^K)$, which copies every input stream exactly through sweep index $K-1$. The same seed proof supplies the repeated mask. Induction along blocks and sweeps gives the same data evolution throughout that prefix. For the zero-guard example from `(0,0)` with a 32-sweep horizon, the Y blocks agree through sweep 32. At sweep 34 the six-symbol queue has 512 copies of `W` in Y and the five-symbol queue has 128. Choosing a horizon in advance leaves open how one finite queue could handle an arbitrarily long computation.
-
-The project's other five-symbol table uses data to reload control. It already performs a second load from a retained payload, and a recurring simulation from live output remains open. Proving six minimal for the cycle observable would require ruling out that approach and every other five-symbol table and encoding. The clock obstruction alone leaves that question open. [Five-symbol writer and readback](five-symbol-tag.md)
+The sole external premise is Minsky's theorem (*Computation: Finite and Infinite Machines*, 1967) with routine normalization to a fresh entry and terminal halt (not formalized); Morita's reversible simulation is not needed.
 
 ---
 
-### Fizzbuzz input 
+## Is six minimal?
 
+For deletion number 2, a single production table, finite starting queues, and exact queue repetition as the observable, what is the least alphabet size (counting erasers, with arbitrary finite appendants and computable encodings) that is universal? The construction above gives an upper bound of **six**.
+
+### Lower bound for this clock architecture
+
+If we reserve two letters for data and require a disjoint, closed clock alphabet (with an eraser) where each clock cell uses two fixed state words of opposite length parity that regenerate the prescribed state in one sweep on either lane, **four clock letters are necessary**—making $4 + 2 = 6$ optimal for this architecture.
+
+**Proof sketch.** Suppose a three-letter clock alphabet $\{A, B, e\}$ implements both an integrator and a differentiator, and let $M$ be the $2 \times 2$ matrix counting $(A, B)$ in the appendants of $A$ and $B$. Summing the two lane outputs of either state word gives $M c_0 = M c_1 = c_0 + c_1$, so $M$ must be singular (otherwise $c_0 = c_1$ forces equal output lengths on both lanes, contradicting opposite state parities) with eigenvalue $2$. That leaves two cases:
+- **Both off-diagonal entries positive:** $\mathrm{tr}(M) = 2$ and $\det(M) = 0$ force all entries to be $1$. Every state word parses into $n > 0$ appendant copies; unless each copy puts one live letter in each lane, both states end up with the same length parity. Otherwise every copy shares the same single difference transfer—either $1+X$ or $(1+X)^{-1}$—and positive powers of one cannot realize the other.
+- **An off-diagonal entry zero:** diagonal entries are $2$ and $0$, so state words parse into $n > 0$ copies of the doubling letter's appendant $V$ plus erasers. Again, opposite-lane placement is forced, giving every copy the same transfer $(1 + bX)/(1 + aX) \in \{1,\, 1+X,\, (1+X)^{-1}\}$, whose positive powers still cannot supply both cells.
+
+See [clock_obstruction.tex](clock_obstruction.tex) for the complete proof.
+
+### Two five-symbol perspectives
+
+- **Removing `D` (integrator-only horizon compiler):** Dropping `D` leaves an integrator-only clock that matches the six-symbol counters up to any chosen finite horizon $K$ (a power of two divisible by the period) by repeating each mask to length $K$ and seeding $K$ integrators, whose transfer $(1+X)^{-K} = 1/(1+X^K)$ copies inputs faithfully through sweep $K - 1$. In the zero-guard example from `(0, 0)` with $K = 32$, the $Y$ blocks match through sweep 32 before diverging at sweep 34 (512 vs. 128 copies of $W$).
+- **Data-reloaded control:** The repository's other five-symbol table uses data itself to reload control—already demonstrating a second load from a retained payload, while recurring simulation from live output remains open (see [five-symbol-tag.md](five-symbol-tag.md)).
+
+Proving six minimal in general would require ruling out data-reloaded control and every other five-symbol table and encoding.
+
+---
+
+## Appendix: FizzBuzz input
+
+**Reconstructing the 2,128-letter word.** Number the 64 sweeps of a period as $t = 4(s-1) + u$ ($1 \le s \le 16$, $0 \le u < 4$) and define three 64-bit masks: $F_t = 1$ at offset 0 of slots 3, 6, 9, 12, 15; $B_t = 1$ at offset 0 of slots 5, 10, 15; $A_t = 1$ only at slot 16, offset 2; and 0 elsewhere. The initial queue is:
+$$
+C(F)\; C(F \oplus B)\; C(B \oplus A)\; W\; C(A).
+$$
+In hexadecimal (cell 0 = LSB), the four integrator seed vectors are `0101101101101101`, `0000110100101010`, `5454544554555444`, and `5555555555555555`. Prepending 64 copies of `DDez` to each and expanding its 64 cells gives lengths $522 + 518 + 536 + 8 + 544 = 2{,}128$. Because the data run stays even on every sweep (the single halving follows a doubling), clock 4 cancels $A_t$ and preserves cut bit 0 by induction.
+
+```text
 DDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezeezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIeezIIezIIezIIezIIeezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIezIIDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezezIIezIIeezIIezIIezIIezIIeezIIezIIezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIezIIezIIeezIIezIIezIIezIIeezIIezIIeezIIezIIeezIIezIIezIIezIIeezIIezIIeezIIezIIeezIIezIIezIIezIIeezIIezIIeezIIezIIeezIIezIIaaaeaeaeDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezDDezeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezIIeezIIezII
+```

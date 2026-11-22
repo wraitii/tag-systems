@@ -31,12 +31,9 @@ def pos [DecidableEq α] (x : α) : List α → Nat
 theorem pos_lt [DecidableEq α] {x : α} : ∀ {l : List α}, x ∈ l → pos x l < l.length
   | [], h => by cases h
   | y :: ys, h => by
-    simp only [pos, List.length_cons]
     by_cases xy : x = y
-    · rw [if_pos xy]; omega
-    · rw [if_neg xy]
-      have := pos_lt ((List.mem_cons.mp h).resolve_left xy)
-      omega
+    · simp [pos, xy]
+    · simpa [pos, xy] using Nat.succ_lt_succ (pos_lt ((List.mem_cons.mp h).resolve_left xy))
 
 theorem pos_inj [DecidableEq α] {x y : α} :
     ∀ {l : List α}, x ∈ l → y ∈ l → pos x l = pos y l → x = y
@@ -75,16 +72,12 @@ structure Standard (m : Machine Q R E) : Prop where
   total : ∀ c : Config Q R, c.pc ≠ m.halt → ∃ i, (m.instruction i).enabled c
 
 theorem lookup_enabled {m : Machine Q R E} {c : Config Q R} {i : E}
-    (h : m.lookup c = some i) : (m.instruction i).enabled c := by
-  have ok := List.find?_some h
-  simpa [Edge.enabled] using ok
+    (h : m.lookup c = some i) : (m.instruction i).enabled c :=
+  Machine.lookup_enabled h
 
 theorem next_edge' {m : Machine Q R E} {c d : Config Q R} (h : m.next c = some d) :
-    ∃ i, (m.instruction i).enabled c ∧ (m.instruction i).target c = d := by
-  unfold Machine.next at h
-  cases e : m.lookup c with
-  | none => simp [e] at h
-  | some i => exact ⟨i, lookup_enabled e, by simpa [e] using h⟩
+    ∃ i, (m.instruction i).enabled c ∧ (m.instruction i).target c = d :=
+  Machine.next_edge h
 
 theorem next_of_enabled {m : Machine Q R E}
     (det : ∀ c i j, (m.instruction i).enabled c → (m.instruction j).enabled c → i = j)
@@ -92,9 +85,7 @@ theorem next_of_enabled {m : Machine Q R E}
     m.next c = some ((m.instruction i).target c) := by
   have look : m.lookup c = some i := by
     cases e : m.lookup c with
-    | none =>
-      have bad := List.find?_eq_none.mp e i (m.edges.complete i)
-      exact False.elim (bad (by simpa [Edge.enabled] using h))
+    | none => exact (Machine.lookup_ne_none h e).elim
     | some j => rw [det c j i (lookup_enabled e) h]
   simp [Machine.next, look]
 
@@ -236,8 +227,8 @@ theorem act_lift_work (op : Op R) (f : File (Slot R)) :
 @[simp] theorem proj_put_work (f : File (Slot R)) (v : Nat) : proj (put f .work v) = proj f := by
   funext r; simp [proj, put]
 
-theorem castSucc_ne_last {n : Nat} (k : Fin n) : k.castSucc ≠ Fin.last n := by
-  intro h; have := congrArg Fin.val h; simp at this; omega
+theorem castSucc_ne_last {n : Nat} (k : Fin n) : k.castSucc ≠ Fin.last n :=
+  Fin.ne_of_lt k.castSucc_lt_last
 
 theorem last_ne_castSucc {n : Nat} (k : Fin n) : Fin.last n ≠ k.castSucc :=
   fun h => castSucc_ne_last k h.symm
@@ -350,10 +341,9 @@ theorem good_live (std : Standard m) (c : Config (RNode m) (Slot R)) (hc : Good 
 
 theorem rev_live (std : Standard m) (input : File R) :
     (rev m std.fresh).live (liftInput input) := by
-  have inv := path_invariant (rev m std.fresh) (liftInput input) (Good m)
-    (by simp [Good, liftInput]) (fun c i hc h => good_step std c i hc h)
   intro n hn
-  exact good_live std _ (inv n) hn
+  exact good_live std _
+    (path_invariant (rev m std.fresh) (liftInput input) (Good m) rfl (good_step std) n) hn
 
 /-! ## The reversible run reaches halt exactly when the source does -/
 
@@ -486,7 +476,6 @@ theorem segment (std : Standard m) {f : File (Slot R)} {e : E} (hw : f .work = 0
     ∃ g, Reach std ⟨.base (m.instruction e).src, f⟩ ⟨.base (m.instruction e).dest, g⟩ ∧
       g .work = 0 ∧ proj g = (m.instruction e).op.act (proj f) := by
   let f1 := (liftOp (m.instruction e).op).act f
-  have w1 : f1 .work = 0 := by simp [f1, act_lift_work, hw]
   obtain ⟨g2, r2, h2, p2⟩ := transfer std e _ f1 rfl
   let t : Live m := ⟨(m.instruction e).dest, std.fresh e⟩
   obtain ⟨g3, r3, h3, _, p3⟩ := chain std t _ (idx m e) g2 rfl

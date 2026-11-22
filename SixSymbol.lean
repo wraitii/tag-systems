@@ -441,11 +441,10 @@ theorem differences_pow (k : Nat) (m : Mask) (t : Int) :
   | succ k ih =>
     rw [Nat.pow_succ, Nat.mul_two, differences_add, ih, ih, ih]
     push_cast
-    have ar : t - (2:Int)^k - (2:Int)^k = t - ((2:Int)^k + (2:Int)^k) := by omega
-    rw [ar, Int.pow_succ]
-    have twice : (2:Int)^k * 2 = (2:Int)^k + (2:Int)^k := by omega
-    rw [twice]
-    cases m t <;> cases m (t-(2:Int)^k) <;> cases m (t-((2:Int)^k+(2:Int)^k)) <;> rfl
+    have offset : (2:Int)^k + (2:Int)^k = (2:Int)^(k+1) := by
+      rw [Int.pow_succ]
+      omega
+    simp [Int.sub_sub, offset, Bool.xor_assoc]
 
 -- The Boolean list records the differentiator memories, outside to inside.
 -- At each layer its integrator remembers that same bit XOR the previous mask.
@@ -728,14 +727,10 @@ private theorem sweepTicks_ge (d : Device k) (n : Nat) : n ≤ sweepTicks d n :=
 
 -- Short queues have no successor. All ticks of a compiled device are live.
 theorem device_live (d : Device k) (n : Nat) : ∃ w, runSteps n d.word = some w := by
-  have h := device_checkpoints d n
-  have hle := sweepTicks_ge d n
-  generalize eq : sweepTicks d n = m at h hle
-  have ar : m = n+(m-n) := by omega
-  rw [ar, runSteps_add] at h
-  cases hn : runSteps n d.word with
-  | none => simp [hn] at h
-  | some w => exact ⟨w,rfl⟩
+  have checkpoint := device_checkpoints d n
+  rw [← Nat.add_sub_of_le (sweepTicks_ge d n), runSteps_add] at checkpoint
+  obtain ⟨w, prefixRun, _⟩ := Option.bind_eq_some.mp checkpoint
+  exact ⟨w, prefixRun⟩
 
 def Device.queue (d : Device k) (t : Nat) := (runSteps t d.word).getD []
 
@@ -2060,16 +2055,19 @@ def Machine.path [DecidableEq Q] [DecidableEq R] (m : Machine Q R E) (input : Fi
 def Machine.live [DecidableEq Q] [DecidableEq R] (m : Machine Q R E) (input : File R) :=
   ∀ n, (m.path input n).pc ≠ m.halt → ∃ i, (m.instruction i).enabled (m.path input n)
 
-private theorem next_edge [DecidableEq Q] [DecidableEq R] {m : Machine Q R E}
+theorem Machine.lookup_enabled [DecidableEq Q] [DecidableEq R] {m : Machine Q R E}
+    {c : Config Q R} {i : E} (h : m.lookup c = some i) : (m.instruction i).enabled c := by
+  simpa [Edge.enabled] using List.find?_some h
+
+theorem Machine.lookup_ne_none [DecidableEq Q] [DecidableEq R] {m : Machine Q R E}
+    {c : Config Q R} {i : E} (h : (m.instruction i).enabled c) : m.lookup c ≠ none :=
+  fun eq => List.find?_eq_none.mp eq i (m.edges.complete i) (by simpa [Edge.enabled] using h)
+
+theorem Machine.next_edge [DecidableEq Q] [DecidableEq R] {m : Machine Q R E}
     {c d : Config Q R} (step : m.next c = some d) :
     ∃ i, (m.instruction i).enabled c ∧ (m.instruction i).target c = d := by
-  unfold Machine.next at step
-  cases e : m.lookup c with
-  | none => simp [e] at step
-  | some i =>
-    have ok := List.find?_some e
-    refine ⟨i,?_,by simpa [e] using step⟩
-    simpa [Edge.enabled] using ok
+  obtain ⟨i, found, target⟩ := Option.map_eq_some'.mp step
+  exact ⟨i, Machine.lookup_enabled found, target⟩
 
 private theorem path_edge [DecidableEq Q] [DecidableEq R] (m : Machine Q R E) (input : File R)
     (live : m.live input) (n : Nat) (nonhalt : (m.path input n).pc ≠ m.halt) :
@@ -2079,12 +2077,11 @@ private theorem path_edge [DecidableEq Q] [DecidableEq R] (m : Machine Q R E) (i
   cases e : m.lookup c with
   | none =>
     obtain ⟨i,he⟩ := live n nonhalt
-    have bad := List.find?_eq_none.mp e i (m.edges.complete i)
-    exact False.elim (bad (by simpa [c,Edge.enabled] using he))
+    exact (Machine.lookup_ne_none he e).elim
   | some i =>
-    apply next_edge
-    change m.next c = some ((m.next c).getD c)
-    simp [Machine.next,e]
+    exact ⟨i, Machine.lookup_enabled e, by
+      change (m.instruction i).target c = (m.next c).getD c
+      simp [Machine.next, e]⟩
 
 private theorem bounce_prefix (stop : Nat → Bool) (n : Nat) :
     ∀ j, j < (bounce stop n).1 → stop j = false := by
@@ -2156,14 +2153,14 @@ private theorem next_fresh [DecidableEq Q] [DecidableEq R] (m : Machine Q R E)
     (rev : Reversible m) (c : Config Q R) (input : File R) :
     m.next c ≠ some ⟨m.entry,input⟩ := by
   intro eq
-  obtain ⟨i,_,hd⟩ := next_edge eq
+  obtain ⟨i,_,hd⟩ := Machine.next_edge eq
   exact rev.fresh i (congrArg Config.pc hd)
 
 private theorem next_injective [DecidableEq Q] [DecidableEq R] (m : Machine Q R E)
     (rev : Reversible m) (x y dest : Config Q R)
     (hx : m.next x = some dest) (hy : m.next y = some dest) : x=y := by
-  obtain ⟨i,go,dx⟩ := next_edge hx
-  obtain ⟨j,go',dy⟩ := next_edge hy
+  obtain ⟨i,go,dx⟩ := Machine.next_edge hx
+  obtain ⟨j,go',dy⟩ := Machine.next_edge hy
   obtain ⟨ix,undo⟩ := edge_reverse _ _ go
   obtain ⟨jy,undo'⟩ := edge_reverse _ _ go'
   rw [dx] at ix undo
