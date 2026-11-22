@@ -7,7 +7,7 @@ I → ezII       D → DDez       z → e
 a → b          b → aaaeaeae   e → ε
 ```
 
-**Claim.** There is a computable encoding of a reversible counter machine and its input into a finite queue such that the machine reaches its halt state if and only if the tag queue eventually repeats exactly. The source machines satisfy the entry, halt, and determinism conditions stated below. The program and data are in the queue. The six productions are fixed.
+**Claim.** There is a computable encoding of a deterministic counter machine and its input into a finite queue such that the machine reaches its halt state if and only if the tag queue eventually repeats exactly. The source machine needs a fresh entry, a terminal halt, and an applicable instruction at every nonhalting configuration. It need not be reversible. The program and data are in the queue. The six productions are fixed. Lean checks the whole reduction. Its only external premise is Minsky's theorem that such counter machines are universal.
 
 ### Program clock
 
@@ -123,7 +123,19 @@ The source reaches halt after one period. The tag queue keeps running. At checkp
 
 ### From counter machines to exact cycles
 
-Take a deterministic reversible counter machine with nonnegative registers, distinct entry and halt states, no incoming entry edge, no outgoing halt edge, and one enabled edge at each reachable live configuration. Each edge tests zero or positive, increments, decrements a positive register, or leaves the registers alone. Distinct edges have disjoint enabled domains at a common source and disjoint images at a common destination. The external universality theorem used here is Morita's reversible simulation of deterministic counter machines (Theorem 3.1). Its construction starts with a fresh entry. An ordinary universal counter program can be given a fresh entry and a single terminal halt before this simulation. [Morita, 1996](https://doi.org/10.1016/0304-3975(96)00081-3)
+The reduction has two stages. A front end turns an ordinary deterministic counter machine into a reversible one. A compiler then turns the reversible machine into a tag queue.
+
+**Source machines.** A counter machine has nonnegative registers and finitely many edges. Each edge tests zero or positive, increments, decrements a positive register, or leaves the registers alone. The source must be deterministic, meaning at most one edge is enabled at any configuration. Its entry has no incoming edge and its halt has no outgoing edge. Every nonhalting configuration has an enabled edge, whether or not it is reachable. Minsky's machines take this form once a fresh start state is added, since "increment and go to" and "decrement, or jump if zero" always apply. These are conditions on the program, not on a particular run.
+
+**Making the source reversible.** Add a history register $H$ and a work register $K$, both initially zero. Number the $N$ source edges $0,\ldots,N-1$. Each source step along edge $e$ into state $q$ runs a gadget.
+
+1. Apply the operation of $e$ and move to a state used only by $e$. Test $K=0$ there.
+2. Move $H$ into $K$ one unit at a time.
+3. Enter the shared loop of $q$ at position $\mathrm{idx}(e)$. From position $k$ the loop adds $N+1-k$ to $H$ and reaches the loop head. Each pass through the head moves one unit out of $K$ and adds $N+1$ to $H$. When $K$ is empty the loop exits to $q$.
+
+The result is $H\mapsto(N+1)H+(N+1-\mathrm{idx}(e))$. The remainder identifies the edge that entered $q$, so every source step can be undone. Each gadget state has at most two incoming edges, and they are told apart by a zero test against a positive test or increment of the same register. One-sided tests remain, namely the test $K=0$ in step 1 and the positivity tests on $H$ inside the loop. They pass on every run because $K$ is zero between source steps and $H$ is positive inside the loop. The resulting machine halts exactly when the source does. Morita's Theorem 3.1 gives another front end of this kind, using a doubling history counter. [Morita, 1996](https://doi.org/10.1016/0304-3975(96)00081-3)
+
+**Reversible machines.** The compiler below takes a deterministic counter machine with distinct entry and halt states, no incoming entry edge, no outgoing halt edge, and an enabled edge at each reachable nonhalting configuration. Distinct edges must have disjoint enabled domains at a common source and disjoint images at a common destination. The front end produces machines of exactly this form. From here on, "the source" means this reversible machine.
 
 **One source step per period.** In addition to the data registers, allocate a flag for each state (0 active, 1 inactive), a latch for each edge (initially 1), and a permanent zero register for unconditional updates. Initialize only the entry flag to 0 among the state flags. Use the twelve-command instruction above for every update below.
 
@@ -141,23 +153,33 @@ If the source runs forever, its forward trajectory has no repeated configuration
 
 ### Checking the equivalence in Lean
 
-**The machine-checked theorem is `SixSymbol.halt_iff_exact_cycle`.** For a finite reversible machine `m` and an input register file, Lean proves this statement about the computed starting word.
+Two files carry the proof, one for each stage. [SixSymbol.lean](SixSymbol.lean) compiles a reversible machine into the tag system. [ReversibleCounter.lean](ReversibleCounter.lean) builds the front end and composes the two stages. It imports the first file without changing it.
+
+**The end-to-end theorem is `ReversibleCounter.halt_iff_exact_cycle`.** For a source machine `m` with `std : Standard m` and an input register file, Lean proves this statement about the computed starting word.
 
 ```lean
-(∃ n, (m.path input n).pc = m.halt) ↔ ExactCycle (encode m input)
+(∃ n, (m.path input n).pc = m.halt) ↔
+  ExactCycle (encode (rev m std.fresh) (liftInput input))
 ```
 
-Read `∃ n` as “at some source step” and `↔` as “if and only if.” On the right, `ExactCycle w` requires two different tag-step counts at which the run from `w` successfully reaches the same whole word. Reaching a short queue twice by treating it as stationary would fail this definition. The hypotheses `Reversible m` and `m.live input` concern the source machine: its enabled edges are forward- and backward-deterministic, entry has no incoming edge, halt has no outgoing edge, and each reachable nonhalting configuration can step. The encoder computes its word from the machine and input alone. [Lean definitions and proofs](SixSymbol.lean)
+Read `∃ n` as “at some source step” and `↔` as “if and only if.” On the right, `ExactCycle w` requires two different tag-step counts at which the run from `w` successfully reaches the same whole word. Reaching a short queue twice by treating it as stationary would fail this definition. `Standard m` states the source conditions above: fresh entry, terminal halt, determinism, and an enabled edge at every nonhalting configuration. `rev m` is the reversible front end, and `liftInput` starts it with $H=K=0$. The encoder computes its word from the machine and input alone.
 
-For a small example, read `Example.input_positive_iff_cycle` at the end of the file. Its three source edges send a positive input straight to halt and a zero input into a loop that increments forever. Lean proves `0 < x ↔ ExactCycle (encode Example.machine (fun _ => x))` for **every** natural number `x`.
+**The reversible stage is `SixSymbol.halt_iff_exact_cycle`.** It states the same equivalence for a reversible machine, with `encode m input` on the right, under two hypotheses. `Reversible m` says that entry has no incoming edge, halt has no outgoing edge, and the enabled edges are forward- and backward-deterministic. `m.live input` says that each reachable nonhalting configuration can step. The second file proves both hypotheses for `rev m`, so neither appears in the end-to-end theorem.
 
-To recheck the file with Lean 4.19 and its standard library, run this command from the project directory. Elan uses the adjacent `lean-toolchain` file to select the version.
+Each file ends with a small example. `SixSymbol.Example.input_positive_iff_cycle` has three reversible source edges. They send a positive input straight to halt and a zero input into a loop that increments forever. Lean proves `0 < x ↔ ExactCycle (encode Example.machine (fun _ => x))` for **every** natural number `x`. `ReversibleCounter.Example.machine` empties its register and halts. Lean proves that it is `Standard` but not `Reversible`, and derives an exact cycle on input 3 through the end-to-end theorem.
+
+To recheck both files with Lean 4.19 and its standard library, run these commands from the project directory. Elan uses the adjacent `lean-toolchain` file to select the version. The second file imports the compiled first file from `build/`.
 
 ```sh
 lean SixSymbol.lean
+mkdir -p build
+lean -o build/SixSymbol.olean SixSymbol.lean
+LEAN_PATH=build lean ReversibleCounter.lean
 ```
 
-The line for `halt_iff_exact_cycle` reports the standard foundational axioms `propext`, `Classical.choice`, and `Quot.sound`. A proof placeholder would add `sorryAx` to this list. [Lean’s guide to checking proofs](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)
+The lines for both `halt_iff_exact_cycle` theorems report the standard foundational axioms `propext`, `Classical.choice`, and `Quot.sound`. A proof placeholder would add `sorryAx` to this list. [Lean’s guide to checking proofs](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)
+
+The first five rows are in `SixSymbol.lean` and the last three in `ReversibleCounter.lean`.
 
 | Theorem | What Lean checks |
 |---|---|
@@ -166,8 +188,11 @@ The line for `halt_iff_exact_cycle` reports the standard foundational axioms `pr
 | `compiled_repeats_iff` | The queue repeats exactly when the register files at period boundaries range over a finite set. Clock memories can vary between visits. |
 | `one_period`, `checkpoint_edge` | Selection, update, and latch clearing implement the enabled forward or inverse transition. The turns at halt and entry realize the bouncing trajectory. |
 | `halt_iff_exact_cycle` | A halting run visits finitely many source configurations in both directions. Repetition on an infinite forward run would contradict reversibility and fresh entry. |
+| `rev_reversible` | The front end has a fresh entry and a terminal halt, and its edges are forward- and backward-deterministic. |
+| `rev_live` | The run invariant ($K=0$ between source steps, $H>0$ inside the loop) leaves an enabled edge at every reachable nonhalting configuration. |
+| `rev_of_halt`, `halt_of_rev` | Each source step completes after a finite gadget run. Every front-end configuration is working on a configuration of the source path. Hence the two machines halt together. |
 
-The formal reduction covers the tag system and the encoder defined in Lean. Morita’s universality theorem for reversible counter machines supplies the external premise for the universality conclusion. The Python implementation is an executable reference. [Morita, 1996](https://doi.org/10.1016/0304-3975(96)00081-3)
+The formal reduction covers the front end, the tag system and the encoder. The remaining external premise is Minsky's theorem that deterministic counter machines are universal. It is used with the routine normalization to a fresh entry and a terminal halt, which is not formalized. Morita's reversible simulation is no longer needed. The Python implementation in [parity_program.py](parity_program.py) is an executable reference for the reversible stage only. It takes reversible machines directly and does not implement the front end. (M. Minsky, *Computation: Finite and Infinite Machines*, 1967.)
 
 ### Is six minimal?
 
