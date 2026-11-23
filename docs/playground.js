@@ -51,7 +51,6 @@ const fizzClockRoles = [
   ["Closing clock", "Cancels the scheduled data-lane change so the next sweep starts with cut 0."],
 ];
 
-const tokens = new RegExp(`(?:${W})+|a|b+|[IDze]+`, "g");
 const rules = new Map();
 let machine, program, checkpoints, seen, cycle, stream, layout, cut, stopMessage;
 let active = "double";
@@ -64,15 +63,16 @@ function element(tag, text, className) {
   return node;
 }
 
+function symbolCell(char) {
+  return element("span", char, `sym sym-${char}`);
+}
+
 function highlight(word) {
-  return Array.from(word.matchAll(tokens), ([token]) => {
-    const type = /^[ab]/.test(token) ? "counter" : /[IDz]/.test(token) ? "control" : "eraser";
-    return element("span", token, type);
-  });
+  return Array.from(word, symbolCell);
 }
 
 for (const [symbol, appendant] of Object.entries(RULES)) {
-  const key = element("dt", symbol);
+  const key = element("dt", symbol, `sym sym-${symbol}`);
   const value = element("dd", "→ ");
   value.append(...(appendant ? highlight(appendant) : ["ε"]));
   byId("rules").append(key, value);
@@ -284,9 +284,14 @@ function render() {
   for (const [id, value] of [["steps", steps], ["sweeps", sweeps], ["length", word.length]]) {
     byId(id).textContent = value.toLocaleString();
   }
-  byId("queue").replaceChildren(...(word.length > 1024
-    ? [...highlight(word.slice(0, 768)), "\n…\n", ...highlight(word.slice(-256))]
-    : word ? highlight(word) : ["(empty)"]));
+  const cells = word.length > 1024
+    ? [...highlight(word.slice(0, 768)), element("span", `… ${(word.length - 1024).toLocaleString()} more …`, "tape-gap"), ...highlight(word.slice(-256))]
+    : word ? highlight(word) : [element("span", "(empty)", "tape-gap")];
+  if (word && !machine.stopped) {
+    cells[0].classList.add("head");
+    if (word.length > 1) cells[1].classList.add("head-pair");
+  }
+  byId("queue").replaceChildren(...cells);
   const next = machine.stopped ? "" : word[0];
   for (const [symbol, key] of rules) key.classList.toggle("active", symbol === next);
   const message = stopMessage || (word.length < 2 ? "Queue exhausted. A step needs two symbols."

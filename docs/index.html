@@ -10,12 +10,13 @@
   <script defer src="./compiler.js"></script>
   <script defer src="./playground.js"></script>
   <script defer src="./walkthrough.js"></script>
+  <script defer src="./diagrams.js"></script>
 </head>
 <body>
 <main>
   <header>
-    <h1>UT6: a six-symbol 2-tag</h1>
-    <p class="subtitle">A veery small universal 2-tag system&mdash;this page documents and runs its proven compiler implementation.</p>
+    <h1>UT6: a six-symbol 2-tag system</h1>
+    <p class="subtitle">A very small universal 2-tag system. This page explains it and runs its proven compiler.</p>
     <nav class="header-links" aria-label="Project links">
       <a href="https://github.com/wraitii/tag-systems">GitHub</a>
       <a href="https://esolangs.org/wiki/UT6">Esolangs wiki page</a>
@@ -31,11 +32,11 @@
     <aside aria-labelledby="rules-heading">
       <h2 id="rules-heading">Production rules</h2>
       <dl id="rules"></dl>
-      <div class="legend">
-        <span class="control">Clock / control</span>
-        <span class="counter">Counter / data</span>
-        <span class="eraser">Shared eraser</span>
-      </div>
+      <dl class="legend">
+        <div><dt><span class="sym sym-I">I</span><span class="sym sym-D">D</span><span class="sym sym-z">z</span></dt><dd>clocks</dd></div>
+        <div><dt><span class="sym sym-a">a</span><span class="sym sym-b">b</span></dt><dd>counters</dd></div>
+        <div><dt><span class="sym sym-e">e</span></dt><dd>shared eraser</dd></div>
+      </dl>
       <p class="muted">A sweep processes the queue present at its start. An odd-length sweep can delete one symbol from the appended tail.</p>
     </aside>
 
@@ -63,7 +64,10 @@
           <div id="assembly-editor">
             <textarea id="assembly" rows="12" spellcheck="false" autocapitalize="off" autocomplete="off"
               aria-describedby="assembly-help"></textarea>
-            <p id="assembly-help" class="muted">Declare registers and labelled blocks. The first label is the entry. A block can have several <code>inc</code> and <code>dec</code> actions, followed by a <code>goto</code>, a zero or positive branch with a fallback <code>goto</code>, or <code>halt</code>. Each action takes a separate machine step. At joins with overlapping incoming edges, the compiler records which edge was taken in a history register, which can make the queue grow quickly.</p>
+            <details class="help">
+              <summary>Syntax</summary>
+              <p id="assembly-help" class="muted">Declare registers and labelled blocks. The first label is the entry. A block can have several <code>inc</code> and <code>dec</code> actions, followed by a <code>goto</code>, a zero or positive branch with a fallback <code>goto</code>, or <code>halt</code>. Each action takes a separate machine step. At joins with overlapping incoming edges, the compiler records which edge was taken in a history register, which can make the queue grow quickly.</p>
+            </details>
             <button id="assemble" type="button">Assemble and load</button>
             <p id="assembly-error" class="input-error" role="alert" hidden></p>
           </div>
@@ -77,7 +81,10 @@
           <div id="linear-editor">
             <textarea id="linear" rows="10" spellcheck="false" autocapitalize="off" autocomplete="off"
               aria-describedby="linear-help"></textarea>
-            <p id="linear-help" class="muted">Declare initial values with <code>reg Y = 0</code>. Each <code>if X == 0: Y += 1</code> line occupies 24 sweeps. Separate multiple updates with commas. <code>#</code> starts a comment. The assembler reserves a zero-valued register when it needs a guard that always fires.</p>
+            <details class="help">
+              <summary>Syntax</summary>
+              <p id="linear-help" class="muted">Declare initial values with <code>reg Y = 0</code>. Each <code>if X == 0: Y += 1</code> line occupies 24 sweeps. Separate multiple updates with commas. <code>#</code> starts a comment. The assembler reserves a zero-valued register when it needs a guard that always fires.</p>
+            </details>
             <button id="compile" type="button">Compile guards and load</button>
             <p id="linear-error" class="input-error" role="alert" hidden></p>
           </div>
@@ -143,7 +150,7 @@
         </div>
         <div id="literal" hidden>
           <h3>Literal queue</h3>
-          <pre id="queue" aria-label="Current queue"></pre>
+          <div id="queue" class="tape" role="group" aria-label="Current queue"></div>
         </div>
       </section>
 
@@ -172,57 +179,75 @@
     <section aria-labelledby="wt-step1-heading">
       <h2 id="wt-step1-heading">1. Sweeps, lanes, and the &ldquo;cut&rdquo;</h2>
       <p>A 2-tag system reads the first symbol of a queue, deletes the first two, and appends a word at the back. Processing the whole queue once is a <strong>sweep</strong>. Because two symbols are deleted at a time, a sweep only reads every second symbol:</p>
-      <div class="wt-example">
+      <figure class="wt-figure" data-diagram="parity">
+        <figcaption>The two cases. Filled cells are read; brackets are the pairs each step deletes. On an odd queue the last pair takes the first appended symbol (crossed out), so the next sweep reads odd positions.</figcaption>
+      </figure>
+      <details class="wt-steps">
+        <summary>Step by step</summary>
+        <div class="wt-example">
         <div><strong>Even-length queue</strong> (<code>s<sub>0</sub> s<sub>1</sub> s<sub>2</sub> s<sub>3</sub></code>): reads <code>s<sub>0</sub></code>, then <code>s<sub>2</sub></code> &rarr; finishes cleanly. The next sweep starts at index 0 (<span class="lane-chip lane-0">0</span> <strong>lane 0</strong>).</div>
-        <div><strong>Odd-length queue</strong> (<code>s<sub>0</sub> s<sub>1</sub> s<sub>2</sub></code>): reads <code>s<sub>0</sub></code>, then <code>s<sub>2</sub></code> deletes <code>s<sub>2</sub></code> <em>plus the first symbol of the new output</em>! That leftover bite is a <strong>cut</strong>: the next sweep starts 1 symbol in, reading odd positions (<span class="lane-chip lane-1">1</span> <strong>lane 1</strong>).</div>
-      </div>
-      <p>In general, passing through an <strong>even-length</strong> block preserves the lane (<span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-0">0</span>, <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-1">1</span>), while an <strong>odd-length</strong> block flips it (<span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span>, <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span>). That single bit&mdash;whether you&rsquo;re currently reading even or odd positions&mdash;is the only control wire in the machine.</p>
+        <div><strong>Odd-length queue</strong> (<code>s<sub>0</sub> s<sub>1</sub> s<sub>2</sub></code>): reads <code>s<sub>0</sub></code>, then <code>s<sub>2</sub></code> deletes <code>s<sub>2</sub></code> <em>plus the first symbol of the new output</em>. That leftover bite is a <strong>cut</strong>: the next sweep starts 1 symbol in, reading odd positions (<span class="lane-chip lane-1">1</span> <strong>lane 1</strong>).</div>
+        </div>
+      </details>
+      <p>In general, passing through an even-length block preserves the lane (<span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-0">0</span>, <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-1">1</span>), while an odd-length block flips it (<span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span>, <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span>). That bit (even or odd positions) is the only control wire in the machine.</p>
     </section>
 
     <section aria-labelledby="wt-step2-heading">
       <h2 id="wt-step2-heading">2. Counters and clocks</h2>
-      <p>A <strong>counter</strong> stores a number by repeating a tile <code>W</code>. There is no separate CPU executing instructions on it: a counter reacts directly to whichever lane sweeps over it, taking <strong>2 sweeps</strong> (one <em>command</em>) to complete an update:</p>
+      <p>A <strong>counter</strong> stores a number by repeating a tile <code>W</code>. There is no separate CPU executing instructions on it: a counter reacts directly to whichever lane sweeps over it, taking two sweeps (one <em>command</em>) to complete an update:</p>
       <ol class="wt-list">
-        <li><strong>Sweep 1 (choose direction):</strong> The incoming lane decides the sign&mdash;<span class="lane-chip lane-0">0</span> <strong>lane 0</strong> turns each <code>W</code> into <code>bbbb</code> (growing), while <span class="lane-chip lane-1">1</span> <strong>lane 1</strong> turns each <code>W</code> into <code>b</code> (shrinking).</li>
-        <li><strong>Sweep 2 (rebuild):</strong> Every pair <code>bb</code> turns back into one <code>W</code>, leaving either <strong>twice</strong> as many <code>W</code> tiles (<code>+1</code>) or <strong>half</strong> as many (<code>&minus;1</code>).</li>
+        <li><strong>Sweep 1 (choose direction):</strong> The incoming lane decides the sign: <span class="lane-chip lane-0">0</span> lane 0 turns each <code>W</code> into <code>bbbb</code> (growing), while <span class="lane-chip lane-1">1</span> lane 1 turns each <code>W</code> into <code>b</code> (shrinking).</li>
+        <li><strong>Sweep 2 (rebuild):</strong> Every pair <code>bb</code> turns back into one <code>W</code>, leaving either twice as many <code>W</code> tiles (<code>+1</code>) or half as many (<code>&minus;1</code>).</li>
       </ol>
-      <p>Notice there is <strong>no &ldquo;do nothing&rdquo;</strong>: every command must push every counter either <code>+1</code> or <code>&minus;1</code>. To hold a counter constant, we pair opposite commands: <code>+ &minus;</code> or <code>&minus; +</code> cancels to <code>0</code>, while <code>+ +</code> gives <code>+2</code> and <code>&minus; &minus;</code> gives <code>&minus;2</code>.</p>
+      <p>There is no &ldquo;do nothing&rdquo; command: every command must push every counter either <code>+1</code> or <code>&minus;1</code>. To hold a counter constant, we pair opposite commands: <code>+ &minus;</code> or <code>&minus; +</code> cancels to <code>0</code>, while <code>+ +</code> gives <code>+2</code> and <code>&minus; &minus;</code> gives <code>&minus;2</code>.</p>
 
       <h3>Encoding the program in clock bitmasks</h3>
-      <p>Between the counters sit <strong>clocks</strong>, alternating down the queue as <code>C<sub>0</sub> &nbsp; X &nbsp; C<sub>1</sub> &nbsp; Y &nbsp; C<sub>2</sub></code>. Each clock stores a fixed, repeating bitmask of <code>0</code>s and <code>1</code>s&mdash;one bit per sweep&mdash;and simply <strong>XORs</strong> its current bit onto the passing lane. That&rsquo;s where the entire program lives: the clock bitmasks choreograph which lane reaches every counter on every sweep.</p>
-      <div class="wt-example">
-        <div><strong>Example &mdash; two commands on <code>X</code> and <code>Y</code></strong> (Sweep 1 of each command, starting on lane <span class="lane-chip lane-0">0</span>):</div>
+      <p>Between the counters sit <strong>clocks</strong>, alternating down the queue as <code>C<sub>0</sub> &nbsp; X &nbsp; C<sub>1</sub> &nbsp; Y &nbsp; C<sub>2</sub></code>. Each clock stores a fixed, repeating bitmask of <code>0</code>s and <code>1</code>s (one bit per sweep) and XORs its current bit onto the passing lane. The whole program lives in these bitmasks: they decide which lane reaches each counter on each sweep.</p>
+      <figure class="wt-figure" data-diagram="commands">
+        <figcaption>The lane flowing through one sweep of each command. Clocks either pass the lane through or flip it; each counter takes <span class="lane-chip lane-0">0</span>&nbsp;=&nbsp;<code>+</code> or <span class="lane-chip lane-1">1</span>&nbsp;=&nbsp;<code>&minus;</code> from the lane it sees.</figcaption>
+      </figure>
+      <details class="wt-steps">
+        <summary>Step by step</summary>
+        <div class="wt-example">
+        <div><strong>Example: two commands on <code>X</code> and <code>Y</code></strong> (sweep 1 of each command, starting on lane <span class="lane-chip lane-0">0</span>):</div>
         <div><strong>Cmd 1</strong> (want <code>X: &minus;</code>, <code>Y: +</code>): <code>C<sub>0</sub></code> flips <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span> (<code>X</code> gets <code>&minus;</code>), <code>C<sub>1</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span> (<code>Y</code> gets <code>+</code>), <code>C<sub>2</sub></code> keeps <span class="lane-chip lane-0">0</span>.</div>
         <div><strong>Cmd 2</strong> (want <code>X: +</code>, <code>Y: &minus;</code>): <code>C<sub>0</sub></code> keeps <span class="lane-chip lane-0">0</span> (<code>X</code> gets <code>+</code>), <code>C<sub>1</sub></code> flips <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span> (<code>Y</code> gets <code>&minus;</code>), <code>C<sub>2</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span> so the sweep ends cleanly on lane <span class="lane-chip lane-0">0</span>.</div>
-      </div>
+        </div>
+      </details>
       <p>Together, Cmd 1 and Cmd 2 cancel out (<code>&minus; +</code> on <code>X</code>, <code>+ &minus;</code> on <code>Y</code>). Adding a counter widens each sweep by one counter + one clock; adding more instructions lengthens the clocks&rsquo; repeating bitmasks.</p>
       <details class="wt-deep-dive">
         <summary>Annex: how <code>W = aaaeaeae</code> implements &plusmn;1 in 2 sweeps</summary>
-        <p>Exponent <var>E</var> is stored as <code>2<sup>E</sup></code> copies of <code>W = aaaeaeae</code> (always even input length <code>8 &middot; 2<sup>E</sup></code>, so Sweep 1 never flips the lane). On Sweep 1 (<code>W &rarr; b</code>), each <code>W</code> outputs <code>bbbb</code> (&times;4) on lane 0 and <code>b</code> (&times;1) on lane 1, producing an even run of <code>b</code>s whenever <code>E &gt; 0</code>. On Sweep 2 (<code>b &rarr; W</code>), any even run <code>b<sup>2k</sup></code> turns into <code>W<sup>k</sup></code> on either lane without flipping it&mdash;giving <code>E + 1</code> or <code>E &minus; 1</code>.</p>
+        <p>Exponent <var>E</var> is stored as <code>2<sup>E</sup></code> copies of <code>W = aaaeaeae</code> (always even input length <code>8 &middot; 2<sup>E</sup></code>, so Sweep 1 never flips the lane). On Sweep 1 (<code>W &rarr; b</code>), each <code>W</code> outputs <code>bbbb</code> (&times;4) on lane 0 and <code>b</code> (&times;1) on lane 1, producing an even run of <code>b</code>s whenever <code>E &gt; 0</code>. On Sweep 2 (<code>b &rarr; W</code>), any even run <code>b<sup>2k</sup></code> turns into <code>W<sup>k</sup></code> on either lane without flipping it, giving <code>E + 1</code> or <code>E &minus; 1</code>.</p>
       </details>
     </section>
 
     <section aria-labelledby="wt-step3-heading">
       <h2 id="wt-step3-heading">3. Micro scale: branching with an underflow cut</h2>
       <p>So far, the clock bitmasks only play back a fixed, repeating script of <code>+</code> and <code>&minus;</code>. How can the machine branch on a counter&rsquo;s value? Through one special case: <strong>underflow</strong>.</p>
-      <p>Decrementing a counter at its minimum (<code>E = 0</code>, a single <code>W<sup>1</sup></code>) turns it into a <strong>singleton <code>b</code></strong> (odd length 1). Notice how the two sweeps keep this clean:</p>
+      <p>Decrementing a counter at its minimum (<code>E = 0</code>, a single <code>W<sup>1</sup></code>) turns it into a <strong>singleton <code>b</code></strong> (odd length 1). The two sweeps handle this as follows:</p>
       <ul class="wt-list">
-        <li><strong>On Sweep 1 (<code>W &rarr; b</code>):</strong> <code>W<sup>1</sup></code> still has even length 8, so the lane does <em>not</em> flip yet&mdash;downstream counters like <code>Y</code> still execute their normal Sweep 1 sign.</li>
-        <li><strong>On Sweep 2 (<code>b &rarr; W</code>, pure reconstruction):</strong> Reading <code>X</code>&rsquo;s singleton <code>b</code> on lane <span class="lane-chip lane-0">0</span> rebuilds <code>W<sup>1</sup></code> <em>and</em> flips the lane to <span class="lane-chip lane-1">1</span>. Because every other counter has an even number of <code>b</code>s&mdash;and even runs reconstruct identically on either lane&mdash;that flip glides harmlessly past <code>Y</code> and exits as a <strong>sign-flip carry</strong> (a cut) into the next command.</li>
+        <li><strong>On Sweep 1 (<code>W &rarr; b</code>):</strong> <code>W<sup>1</sup></code> still has even length 8, so the lane does <em>not</em> flip yet, so downstream counters like <code>Y</code> still execute their normal Sweep 1 sign.</li>
+        <li><strong>On Sweep 2 (<code>b &rarr; W</code>, pure reconstruction):</strong> Reading <code>X</code>&rsquo;s singleton <code>b</code> on lane <span class="lane-chip lane-0">0</span> rebuilds <code>W<sup>1</sup></code> <em>and</em> flips the lane to <span class="lane-chip lane-1">1</span>. Every other counter holds an even number of <code>b</code>s, and even runs reconstruct identically on either lane, so the flip passes <code>Y</code> unchanged and leaves as a <strong>sign-flip carry</strong> (a cut) into the next command.</li>
       </ul>
 
       <h3>Same two commands, both sweeps materialized (a 2-command probe)</h3>
       <p>Replay Cmd 1 and Cmd 2 from Section 2 when <code>X</code> starts at <code>E = 0</code>, now showing their Sweep 2 clock bits as well (all clocks keep on Cmd 1&rsquo;s Sweep 2; <code>C<sub>0</sub></code> and <code>C<sub>1</sub></code> both flip on Cmd 2&rsquo;s Sweep 2):</p>
-      <div class="wt-example">
+      <figure class="wt-figure" data-diagram="probe">
+        <figcaption>Both sweeps of each command, with <code>X</code> at <code>E = 0</code>. A filled purple sign was inverted by the incoming carry.</figcaption>
+      </figure>
+      <details class="wt-steps">
+        <summary>Step by step</summary>
+        <div class="wt-example">
         <div><strong>Cmd 1 &middot; Sweep 1</strong> (enters <span class="lane-chip lane-0">0</span>): <code>C<sub>0</sub></code> flips <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span> (<code>X</code> gets <code>&minus;</code> &rarr; becomes <code>b<sup>1</sup></code>); <code>C<sub>1</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span> (<code>Y</code> still gets <code>+</code>); <code>C<sub>2</sub></code> keeps <span class="lane-chip lane-0">0</span>.</div>
-        <div><strong>Cmd 1 &middot; Sweep 2</strong> (enters <span class="lane-chip lane-0">0</span>, reconstruct; all clocks keep): <code>X</code>&rsquo;s singleton <code>b<sup>1</sup></code> is read on lane <span class="lane-chip lane-0">0</span>, rebuilding <code>W<sup>1</sup></code> and <strong>flipping <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span></strong>; <code>Y</code> reconstructs harmlessly on lane <span class="lane-chip lane-1">1</span> &rarr; exits with a <strong>sign-flip carry</strong> (<span class="lane-chip lane-1">1</span>).</div>
-        <div><strong>Cmd 2 &middot; Sweep 1</strong> (enters <span class="lane-chip lane-1">1</span>, carry inverts signs!): <code>C<sub>0</sub></code> keeps <span class="lane-chip lane-1">1</span> (<code>X</code> gets <code>&minus;</code> instead of <code>+</code> &rarr; <code>b<sup>1</sup></code> again); <code>C<sub>1</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span> (<code>Y</code> gets <code>+</code> instead of <code>&minus;</code>!); <code>C<sub>2</sub></code> flips <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span>.</div>
-        <div><strong>Cmd 2 &middot; Sweep 2</strong> (enters <span class="lane-chip lane-1">1</span>, reconstruct): <code>C<sub>0</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span> so <code>X</code>&rsquo;s <code>b<sup>1</sup></code> is read on lane <span class="lane-chip lane-0">0</span> (on lane <span class="lane-chip lane-1">1</span>, the cut would eat the lone <code>b</code> and destroy <code>X</code>!), rebuilding <code>W<sup>1</sup></code> and flipping <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span>; <code>C<sub>1</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span>; <code>Y</code> reconstructs &rarr; exits cleanly on <span class="lane-chip lane-0">0</span> (carry cancelled!).</div>
-      </div>
-      <p>With the carry, <code>Y</code>&rsquo;s cancelling pair (<code>+ &minus;</code>) turned into a doubling pair (<code>+ +</code>, net <code>+2</code>), while <code>X</code>&mdash;despite receiving <code>&minus; &minus;</code>&mdash;clamps at <code>W<sup>1</sup></code> (<code>E = 0</code>) both times. If <code>X &gt; 0</code>, no underflow occurs and no carry is created&mdash;and <code>C<sub>0</sub></code>/<code>C<sub>1</sub></code> flipping on Cmd 2&rsquo;s Sweep 2 is a harmless no-op because <code>X</code>&rsquo;s even run of <code>b</code>s reconstructs identically on lane <span class="lane-chip lane-1">1</span> before <code>C<sub>1</sub></code> flips back to <span class="lane-chip lane-0">0</span>&mdash;so both commands cancel to <code>0</code>.</p>
+        <div><strong>Cmd 1 &middot; Sweep 2</strong> (enters <span class="lane-chip lane-0">0</span>, reconstruct; all clocks keep): <code>X</code>&rsquo;s singleton <code>b<sup>1</sup></code> is read on lane <span class="lane-chip lane-0">0</span>, rebuilding <code>W<sup>1</sup></code> and flipping <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span>; <code>Y</code> reconstructs harmlessly on lane <span class="lane-chip lane-1">1</span> &rarr; exits with a sign-flip carry (<span class="lane-chip lane-1">1</span>).</div>
+        <div><strong>Cmd 2 &middot; Sweep 1</strong> (enters <span class="lane-chip lane-1">1</span>, the carry inverts signs): <code>C<sub>0</sub></code> keeps <span class="lane-chip lane-1">1</span> (<code>X</code> gets <code>&minus;</code> instead of <code>+</code> &rarr; <code>b<sup>1</sup></code> again); <code>C<sub>1</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span> (<code>Y</code> gets <code>+</code> instead of <code>&minus;</code>); <code>C<sub>2</sub></code> flips <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span>.</div>
+        <div><strong>Cmd 2 &middot; Sweep 2</strong> (enters <span class="lane-chip lane-1">1</span>, reconstruct): <code>C<sub>0</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span> so <code>X</code>&rsquo;s <code>b<sup>1</sup></code> is read on lane <span class="lane-chip lane-0">0</span> (on lane <span class="lane-chip lane-1">1</span>, the cut would eat the lone <code>b</code> and destroy <code>X</code>), rebuilding <code>W<sup>1</sup></code> and flipping <span class="lane-chip lane-0">0</span>&rarr;<span class="lane-chip lane-1">1</span>; <code>C<sub>1</sub></code> flips <span class="lane-chip lane-1">1</span>&rarr;<span class="lane-chip lane-0">0</span>; <code>Y</code> reconstructs &rarr; exits cleanly on <span class="lane-chip lane-0">0</span> (the carry is cancelled).</div>
+        </div>
+      </details>
+      <p>With the carry, <code>Y</code>&rsquo;s cancelling pair (<code>+ &minus;</code>) turned into a doubling pair (<code>+ +</code>, net <code>+2</code>), while <code>X</code>, despite receiving <code>&minus; &minus;</code>, clamps at <code>W<sup>1</sup></code> (<code>E = 0</code>) both times. If <code>X &gt; 0</code>, no underflow occurs and no carry is created, and <code>C<sub>0</sub></code>/<code>C<sub>1</sub></code> flipping on Cmd 2&rsquo;s Sweep 2 is a harmless no-op because <code>X</code>&rsquo;s even run of <code>b</code>s reconstructs identically on lane <span class="lane-chip lane-1">1</span> before <code>C<sub>1</sub></code> flips back to <span class="lane-chip lane-0">0</span>, so both commands cancel to <code>0</code>.</p>
 
       <h3>Putting it together: the 12-command Guard gadget</h3>
-      <p>One probe forces every other counter to move either <code>+2</code> or <code>&minus;2</code> when <code>X == 0</code>. Running <strong>two probes</strong> back-to-back lets an unchanged counter move <code>+2</code> then <code>&minus;2</code> (net <code>0</code>), while an incremented counter moves <code>+2 + 2 = +4</code> (and a decremented one mirrors it with <code>&minus;2 &minus; 2 = &minus;4</code>). That&rsquo;s why logical value <var>v</var> is stored at exponent <code>4 + 4v</code>: the <code>4v</code> matches the <code>&plusmn;4</code> step size, and the <code>+4</code> safety bias keeps non-tested counters at logical <code>0</code> safely above <code>E = 0</code> so they never accidentally underflow during <code>&minus;</code> steps in no-op pairs or probe halves. Four commands before and after the two probes strip and restore only <code>X</code>&rsquo;s <code>+4</code> bias, giving <strong>12 commands (24 sweeps)</strong> in total. Because <code>X</code> has to sit at <code>E = 0</code> for both probes, <strong>a guard cannot conditionally modify the counter it tests</strong>.</p>
+      <p>One probe forces every other counter to move either <code>+2</code> or <code>&minus;2</code> when <code>X == 0</code>. Running two probes back-to-back lets an unchanged counter move <code>+2</code> then <code>&minus;2</code> (net <code>0</code>), while an incremented counter moves <code>+2 + 2 = +4</code> (and a decremented one mirrors it with <code>&minus;2 &minus; 2 = &minus;4</code>). That&rsquo;s why logical value <var>v</var> is stored at exponent <code>4 + 4v</code>: the <code>4v</code> matches the <code>&plusmn;4</code> step size, and the <code>+4</code> safety bias keeps non-tested counters at logical <code>0</code> safely above <code>E = 0</code> so they never accidentally underflow during <code>&minus;</code> steps in no-op pairs or probe halves. Four commands before and after the two probes strip and restore only <code>X</code>&rsquo;s <code>+4</code> bias, giving 12 commands (24 sweeps) in total. Because <code>X</code> has to sit at <code>E = 0</code> for both probes, <strong>a guard cannot conditionally modify the counter it tests</strong>.</p>
       <p>Below is a full trace of <code>if X == 0: Y += 1</code> while a third counter <code>Z</code> stays unchanged:</p>
 
       <div class="wt-interactive" aria-live="polite">
@@ -254,6 +279,7 @@
             <tbody id="wt-guard-rows"></tbody>
           </table>
         </div>
+        <p class="wt-key muted"><span class="wt-sign wt-sign-flip">&minus;</span> sign inverted by an incoming cut of <span class="lane-chip lane-1">1</span>: the clock programmed the opposite sign.</p>
       </div>
 
       <div class="actions wt-try">
@@ -264,29 +290,26 @@
 
     <section aria-labelledby="wt-step4-heading">
       <h2 id="wt-step4-heading">4. Macro scale: how does the program counter advance?</h2>
-      <p>The clocks only march forward in a fixed loop&mdash;they can&rsquo;t jump. So instead of moving a program counter inside the clocks, we store the program&rsquo;s state in <strong>ordinary counters</strong> and run <em>every</em> guard in the program on every full clock cycle (a <strong>period</strong>), movfuscator-style.</p>
+      <p>The clocks only march forward in a fixed loop and can&rsquo;t jump. So instead of moving a program counter inside the clocks, we store the program&rsquo;s state in ordinary counters and run <em>every</em> guard in the program on every full clock cycle (a <strong>period</strong>), movfuscator-style.</p>
       <p>Each state gets a <strong>state flag</strong> counter (<code>0</code> = currently here, <code>1</code> = elsewhere), and each transition gets an <strong>edge latch</strong> counter (<code>0</code> = chosen, <code>1</code> = idle). One period simulates one machine step in three phases:</p>
 
-      <div class="phase-grid">
-        <article class="phase-card">
-          <div class="phase-num">Phase 1</div>
+      <ol class="phases">
+        <li>
           <h3>Choose the edge</h3>
           <p>For each edge, temporarily bump <code>state_src</code> if its condition is false (for an <code>X == 0</code> test, bump unconditionally then undo via <code>if X == 0: state_src -= 1</code>), run:</p>
           <pre>if state_src == 0: edge_k -= 1</pre>
           <p>then undo the bump. Only the single enabled edge drops to <code>0</code>.</p>
-        </article>
-        <article class="phase-card">
-          <div class="phase-num">Phase 2</div>
+        </li>
+        <li>
           <h3>Execute the edge</h3>
           <p>Scan all edges; only the one with <code>edge_k == 0</code> updates the state flags and data:</p>
           <pre>if edge_k == 0: state_src += 1, state_dst -= 1, X += 1</pre>
-        </article>
-        <article class="phase-card">
-          <div class="phase-num">Phase 3</div>
+        </li>
+        <li>
           <h3>Clear the latch</h3>
           <p>Every latch must return to <code>1</code> for the next period. Because a guard can&rsquo;t test <code>edge_k</code> to modify <code>edge_k</code> itself, Clear runs Phase 1 in reverse from <code>state_dst</code> to reset the taken edge&rsquo;s latch.</p>
-        </article>
-      </div>
+        </li>
+      </ol>
 
       <details class="wt-deep-dive">
         <summary>Annex: how the clocks are built from symbols</summary>
@@ -307,17 +330,17 @@
       </ul>
 
       <h3>Recording ambiguous joins as a base-k stack</h3>
-      <p>Suppose two edges&mdash;<code>left</code> and <code>right</code>&mdash;both arrive at <code>join</code> with <code>X = 1</code>. To remember which one arrived (even across loops), we keep a <code>history</code> counter and push a nonzero digit onto it: <code>left</code> pushes <code>2</code> and <code>right</code> pushes <code>1</code>, updating <code>history &larr; 2 &middot; history + digit</code> (in general, for <var>k</var> incoming edges indexed <code>0 &le; i &lt; k</code>, edge <code>i</code> pushes <code>k &minus; i</code>, giving <code>k &middot; history + (k &minus; i)</code>). Keeping the digit nonzero guarantees that every subsequent step in the chain enters with <code>history &gt; 0</code>, cleanly separated from a fresh entry where <code>history == 0</code>.</p>
+      <p>Suppose two edges, <code>left</code> and <code>right</code>, both arrive at <code>join</code> with <code>X = 1</code>. To remember which one arrived (even across loops), we keep a <code>history</code> counter and push a nonzero digit onto it: <code>left</code> pushes <code>2</code> and <code>right</code> pushes <code>1</code>, updating <code>history &larr; 2 &middot; history + digit</code> (in general, for <var>k</var> incoming edges indexed <code>0 &le; i &lt; k</code>, edge <code>i</code> pushes <code>k &minus; i</code>, giving <code>k &middot; history + (k &minus; i)</code>). Keeping the digit nonzero guarantees that every subsequent step in the chain enters with <code>history &gt; 0</code>, cleanly separated from a fresh entry where <code>history == 0</code>.</p>
       <p>Since a counter machine only has <code>+1</code>, <code>&minus;1</code>, and <code>== 0</code>, multiplying by <var>k</var> is done with a scratch counter <code>history_work</code> (initially <code>0</code>) in three steps:</p>
       <ol class="wt-list">
         <li><strong>Drain old history:</strong> Each incoming edge redirects to its own private entry state and moves <code>history</code> into <code>history_work</code> one unit at a time until <code>history == 0</code>.</li>
-        <li><strong>Push the new digit:</strong> Enter a shared chain of <var>k</var> <code>inc history</code> states at offset <code>i</code>&mdash;so <code>left</code> (<code>i = 0</code>) runs both increments (<code>+2</code>), while <code>right</code> (<code>i = 1</code>) skips the first and runs one (<code>+1</code>).</li>
+        <li><strong>Push the new digit:</strong> Enter a shared chain of <var>k</var> <code>inc history</code> states at offset <code>i</code>, so <code>left</code> (<code>i = 0</code>) runs both increments (<code>+2</code>), while <code>right</code> (<code>i = 1</code>) skips the first and runs one (<code>+1</code>).</li>
         <li><strong>Multiply back by <var>k</var>:</strong> While <code>history_work &gt; 0</code>, decrement <code>history_work</code> and loop back through all <var>k</var> increments on <code>history</code>. When <code>history_work == 0</code>, exit into <code>join</code>.</li>
       </ol>
       <p class="muted">Why doesn&rsquo;t this create new ambiguous joins? Every state inside the loop has at most two incoming edges separated by a clean zero/positive test (<code>history == 0</code> vs. <code>&gt; 0</code>, or <code>history_work == 0</code> vs. <code>&gt; 0</code>), and <code>join</code> itself now has a single incoming edge. The trade-off is that <code>history</code> grows by a factor of <var>k</var> each time an ambiguous join is crossed, which makes its exponential counter grow fast.</p>
 
       <h3>Halting as exact repetition</h3>
-      <p>Eliminating ambiguous joins gives every step a unique predecessor, making the entire machine reversible. Pairing a forward copy of the machine with a backward copy then makes halting runs bounce in a bounded loop forever (forcing the entire queue to repeat identically), whereas non-halting runs that keep advancing&mdash;growing a register or crossing an ambiguous join&mdash;grow without bound and never repeat.</p>
+      <p>Eliminating ambiguous joins gives every step a unique predecessor, making the entire machine reversible. Pairing a forward copy of the machine with a backward copy then makes halting runs bounce in a bounded loop forever (forcing the entire queue to repeat identically), whereas non-halting runs that keep advancing (growing a register or crossing an ambiguous join) grow without bound and never repeat.</p>
 
       <div class="actions wt-try">
         <button type="button" data-open-preset="join">Try Ambiguous join &rarr;</button>

@@ -72,7 +72,7 @@
     {
       title: "5–6 · First probe",
       summary: xZero => xZero
-        ? "Command 5 decrements X at E = 0: underflow! Its singleton b flips cut → 1 for command 6, inverting every programmed sign. In command 6, X underflows again and cancels cut → 0. Both Y and Z move +2."
+        ? "Command 5 decrements X at E = 0 and underflows. Its singleton b flips cut → 1 for command 6, inverting every programmed sign. In command 6, X underflows again and cancels cut → 0. Both Y and Z move +2."
         : "Command 5 decrements X from E = 4 to 3 (no underflow, cut stays 0). Command 6 runs unflipped and cancels every change from command 5.",
     },
     {
@@ -124,9 +124,14 @@
   function formatSign(programmed, effective) {
     const sign = document.createElement("span");
     const flipped = programmed !== effective;
+    const symbol = value => (value > 0 ? "+" : "−");
     sign.className = flipped ? "wt-sign wt-sign-flip" : "wt-sign";
-    sign.textContent = effective > 0 ? "+" : "−";
-    if (flipped) sign.title = `Programmed ${programmed > 0 ? "+" : "−"}, inverted by cut 1`;
+    if (flipped) {
+      sign.textContent = symbol(effective);
+      sign.title = `Programmed ${symbol(programmed)}, inverted by cut 1`;
+    } else {
+      sign.textContent = symbol(effective);
+    }
     return sign;
   }
 
@@ -147,12 +152,20 @@
       return button;
     }));
 
-    document.getElementById("wt-stage-summary").textContent = STAGES[stageIndex].summary(xZero);
+    // Stack every summary in one grid cell so the tallest sets the height and the table never shifts.
+    document.getElementById("wt-stage-summary").replaceChildren(...STAGES.flatMap((stage, i) =>
+      [true, false].map(x => {
+        const span = document.createElement("span");
+        span.textContent = stage.summary(x);
+        if (i !== stageIndex || x !== xZero) span.className = "wt-summary-spacer";
+        return span;
+      })));
 
     const trace = simulateGuard(xZero);
-    const rows = trace.map(step => {
+    const rows = trace.map((step, index) => {
       const tr = document.createElement("tr");
       if (step.stage === stageIndex) tr.classList.add("wt-row-active");
+      if (index > 0 && trace[index - 1].stage !== step.stage) tr.classList.add("wt-stage-start");
       if (step.underflow) tr.classList.add("wt-row-underflow");
 
       const cmdCell = document.createElement("th");
@@ -169,10 +182,14 @@
         td.append(formatSign(step.signs[i], step.effective[i]));
         const expSpan = document.createElement("span");
         expSpan.className = "wt-exp";
-        expSpan.textContent = i === 0 && step.underflow
-          ? `E=${step.after[i]} (underflow!)`
-          : `E=${step.after[i]}`;
+        expSpan.textContent = `E=${step.after[i]}`;
         td.append(expSpan);
+        if (i === 0 && step.underflow) {
+          const flag = document.createElement("span");
+          flag.className = "wt-flag";
+          flag.textContent = "underflow";
+          td.append(flag);
+        }
         tr.append(td);
       }
 
