@@ -34,6 +34,10 @@ Deleting two letters per step means each pass over the queue (a *sweep*) reads o
 
 ## Fun stuff you can run
 
+Open [the browser playground](docs/index.html) from a local checkout to step through each example. You can write labelled counter-machine assembly, edit its linear guard schedule, or load a literal starting queue. Assembling regenerates both lower levels. Compiling the guards regenerates just the queue. The execution view can switch between the macro layout and literal symbols.
+
+To publish it, select **Deploy from a branch** under **Settings → Pages**, then select the branch containing the playground and its **`/docs`** folder. [GitHub Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+
 ### 1. Double a block by hand
 
 Start with one copy of `W = aaaeaeae`. Each arrow is one literal 2-tag step:
@@ -143,6 +147,7 @@ Both main theorems depend only on standard foundational axioms (`propext`, `Clas
 | [lean/ReversibleCounter.lean](lean/ReversibleCounter.lean) | Lean 4 proof of the reversible front end and end-to-end theorem |
 | [examples/parity_program.py](examples/parity_program.py) | Executable Python reference compiler and verifier |
 | [examples/six_symbol_fizzbuzz.py](examples/six_symbol_fizzbuzz.py) | Runnable FizzBuzz 2-tag demo |
+| [docs/](docs/) | Browser playground and GitHub Pages source |
 | [explorations/](explorations/) | Exploratory five-symbol, Collatz, and loop experiments |
 
 ---
